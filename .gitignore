@@ -1,0 +1,18 @@
+data/raw/
+data/processed/
+eval/runs/
+
+# Python / tooling artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+# LibreOffice lock files
+.~lock.*#
+
+# Local-only (repo is public): personal notes, and the test set with verbatim
+# source-document quotes. testset.jsonl is derived from annotations.csv, so it
+# carries the same quotes. Root-anchored so the frontend's own CLAUDE.md stays tracked.
+/CLAUDE.md
+/instruction_for_claude.md
+/eval/questions/annotations.csv
+/eval/questions/testset.jsonl

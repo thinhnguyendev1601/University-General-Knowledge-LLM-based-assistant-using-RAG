@@ -1,0 +1,14 @@
+# Copy to eval/configs/<name>.yaml for each experiment. One file == one reproducible run.
+run_name: baseline-keyword
+testset: eval/questions/testset.jsonl
+split: dev              # dev | test | all   (test/all need --final on the CLI)
+min_status: draft       # use "approved" for the frozen final runs
+pipeline: eval.pipeline_stub:build_keyword_baseline
+pipeline_kwargs:
+  processed_dir: data/processed
+  top_k: 5
+  refuse_below: 0.5
+k_values: [1, 3, 5, 10]
+min_overlap_frac: 0.5   # chunk must cover >= 50% of the gold evidence span to count as a hit
+limit: null
+out_dir: eval/runs
