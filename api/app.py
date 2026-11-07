@@ -32,6 +32,7 @@ from rag.pipeline import DensePipeline
 from api.rag_admission import shutdown_admission
 from api.health import router as health_router, close_health_resources
 from api.telemetry import emit, http_request_id, install_access_filter
+from api.session_cache import close_session_caches
 
 install_access_filter()
 
@@ -50,6 +51,7 @@ async def lifespan(app: FastAPI):
     finally:
         shutdown_admission()
         close_health_resources()
+        close_session_caches()
         STATE.clear()
 
 

@@ -16,13 +16,14 @@ from api.database import get_db
 from api.mail import SMTPMailer, get_mailer
 from api.models import AccountToken, LoginSession, User, utcnow
 from api.settings import Settings, get_settings
+from api.session_cache import RedisSessionCache, SessionSnapshot, get_session_cache
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 REGISTRATION_MESSAGE = "Đăng ký thành công. Bạn có thể đăng nhập ngay."
 RESET_MESSAGE = "Nếu tài khoản đủ điều kiện, liên kết đặt lại mật khẩu đã được gửi."
 
 
-def auth_view(user: User, session: LoginSession) -> AuthView:
+def auth_view(user: User, session: LoginSession | SessionSnapshot) -> AuthView:
     return AuthView(user=UserView.model_validate(user), csrfToken=session.csrf_token,
                     expiresAt=aware(session.expires_at).isoformat())
 
@@ -76,7 +77,7 @@ def register(body: RegisterBody, request: Request, db: Session = Depends(get_db)
 
 @router.post("/login", response_model=AuthView, dependencies=[Depends(require_origin)])
 def login(body: LoginBody, request: Request, response: Response, db: Session = Depends(get_db),
-          settings: Settings = Depends(get_settings)):
+          settings: Settings = Depends(get_settings), cache: RedisSessionCache | None = Depends(get_session_cache)):
     throttle(db, request, "login", body.email, email_limit=10, ip_limit=50)
     user = db.scalar(select(User).where(User.email == body.email).with_for_update())
     try:
@@ -96,6 +97,10 @@ def login(body: LoginBody, request: Request, response: Response, db: Session = D
                            expires_at=now + timedelta(seconds=settings.session_seconds))
     db.add(session)
     db.commit()
+    if cache:
+        if old_cookie:
+            cache.invalidate(digest(old_cookie))
+        cache.store(SessionSnapshot.from_session(session))
     response.set_cookie(cookie_name(settings), raw, max_age=settings.session_seconds,
                         httponly=True, secure=settings.cookie_secure, samesite="lax", path="/")
     return auth_view(user, session)
@@ -108,9 +113,14 @@ def me(request: Request, user: User = Depends(require_user)):
 
 @router.post("/logout", status_code=204)
 def logout(request: Request, response: Response, user: User = Depends(require_user),
-           db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    request.state.login_session.revoked_at = utcnow()
+           db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+           cache: RedisSessionCache | None = Depends(get_session_cache)):
+    session_id = request.state.login_session.id
+    db.execute(update(LoginSession).where(LoginSession.id == session_id, LoginSession.user_id == user.id)
+               .values(revoked_at=utcnow()))
     db.commit()
+    if cache:
+        cache.invalidate(session_id)
     response.delete_cookie(cookie_name(settings), path="/", secure=settings.cookie_secure,
                            httponly=True, samesite="lax")
 
@@ -126,14 +136,18 @@ def forgot_password(body: EmailBody, request: Request, db: Session = Depends(get
 
 
 @router.post("/reset-password", response_model=MessageView, dependencies=[Depends(require_origin)])
-def reset_password(body: ResetBody, request: Request, db: Session = Depends(get_db)):
+def reset_password(body: ResetBody, request: Request, db: Session = Depends(get_db),
+                   cache: RedisSessionCache | None = Depends(get_session_cache)):
     throttle(db, request, "reset", "all", email_limit=200, ip_limit=30)
     user = consume_reset_token(db, body.token.get_secret_value())
     user.password_hash = password_hasher.hash(body.password.get_secret_value())
+    session_ids = list(db.scalars(select(LoginSession.id).where(LoginSession.user_id == user.id))) if cache else []
     now = utcnow()
     db.execute(update(LoginSession).where(LoginSession.user_id == user.id).values(revoked_at=now))
     db.execute(update(AccountToken).where(
         AccountToken.user_id == user.id, AccountToken.purpose == "reset", AccountToken.consumed_at.is_(None),
     ).values(consumed_at=now))
     db.commit()
+    if cache:
+        cache.invalidate(*session_ids)
     return MessageView(message="Mật khẩu đã được thay đổi. Vui lòng đăng nhập lại.")

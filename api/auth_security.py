@@ -4,12 +4,13 @@ import secrets
 
 from argon2 import PasswordHasher
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import case, update
 from sqlalchemy.orm import Session
 
 from api.database import get_db
 from api.models import LoginSession, RateLimit, User, utcnow
 from api.settings import Settings, get_settings
+from api.session_cache import RedisSessionCache, SessionSnapshot, get_session_cache
 
 password_hasher = PasswordHasher()
 # Missing users still perform password verification, reducing account timing disclosure.
@@ -60,24 +61,50 @@ def throttle(db: Session, request: Request, action: str, email: str, email_limit
                             headers={"Retry-After": str(window - now % window)})
 
 
-def require_user(request: Request, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> User:
+def require_user(request: Request, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+                 cache: RedisSessionCache | None = Depends(get_session_cache)) -> User:
     raw_token = request.cookies.get(cookie_name(settings))
-    session = db.get(LoginSession, digest(raw_token)) if raw_token else None
+    session_id = digest(raw_token) if raw_token else None
+    snapshot = cache.load(session_id) if cache and session_id else None
+    cache_hit = snapshot is not None
+    if snapshot is None and session_id:
+        session = db.get(LoginSession, session_id)
+        if session:
+            snapshot = SessionSnapshot.from_session(session)
     now = utcnow()
-    if (not session or session.revoked_at or aware(session.expires_at) <= now
-            or aware(session.last_seen_at) + timedelta(seconds=settings.session_idle_seconds) <= now):
+    if snapshot is None:
         raise HTTPException(401, "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
-    user = db.get(User, session.user_id)
+    # A cache entry is never proof of authorization. This atomic write checks current
+    # revocation/expiry/idle state, binds the cached identity/CSRF to the actual row,
+    # and prevents concurrent requests from moving last_seen_at backwards.
+    expires = db.execute(update(LoginSession).where(
+        LoginSession.id == session_id, LoginSession.user_id == snapshot.user_id,
+        LoginSession.csrf_token == snapshot.csrf_token, LoginSession.revoked_at.is_(None),
+        LoginSession.expires_at > now,
+        LoginSession.last_seen_at > now - timedelta(seconds=settings.session_idle_seconds),
+    ).values(last_seen_at=case((LoginSession.last_seen_at < now, now), else_=LoginSession.last_seen_at))
+        .returning(LoginSession.expires_at).execution_options(synchronize_session=False)).scalar_one_or_none()
+    if expires is None:
+        db.rollback()
+        if cache:
+            cache.invalidate(session_id)
+        raise HTTPException(401, "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+    user = db.get(User, snapshot.user_id)
     if not user or user.status != "active":
+        db.rollback()
+        if cache:
+            cache.invalidate(session_id)
         raise HTTPException(401, "Tài khoản không khả dụng")
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         require_origin(request, settings)
         csrf = request.headers.get("x-csrf-token", "")
-        if not secrets.compare_digest(csrf, session.csrf_token):
+        if not secrets.compare_digest(csrf, snapshot.csrf_token):
             raise HTTPException(403, "Yêu cầu không hợp lệ. Vui lòng tải lại trang.")
-    session.last_seen_at = now
+    snapshot = SessionSnapshot(snapshot.id, snapshot.user_id, snapshot.csrf_token, aware(expires))
     db.commit()
-    request.state.login_session = session
+    if cache and not cache_hit:
+        cache.store(snapshot)
+    request.state.login_session = snapshot
     return user
 
 
