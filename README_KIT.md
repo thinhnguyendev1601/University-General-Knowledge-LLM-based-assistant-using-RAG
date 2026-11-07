@@ -1,6 +1,6 @@
 # Week-1 kit: corpus, schema, annotation guide, eval skeleton
-
-Unzip into the repository root (folders merge with yours). Then:
+Install the rag-data-for-team zip folder
+Unzip it into the repository root (folders merge with yours), make sure it is data/processed and data/index. Then:
 
 ```bash
 # install all of the required packages
