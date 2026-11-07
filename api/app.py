@@ -5,119 +5,124 @@
 Implements the frontend contract (projectsoftwareengineeringfrontend/CLAUDE.md §6):
     POST /api/chat/messages {conversationId, content, institutionId?} -> ChatMessage
 plus GET /api/institutions (school picker) and GET /api/health.
-Out of scope here (backend lead's lane): auth/JWT, Postgres, conversation storage - the UI
-keeps conversations in localStorage for now (BACKEND_BLOCKED_FEATURES.md).
+Cookie authentication and PostgreSQL accounts are provided by api.auth.
+Private conversation persistence is provided by api.chat and connected to the main frontend.
 
 Config via env vars: RAG_LLM=ollama|none, RAG_LLM_MODEL=llama3.2, OLLAMA_URL, RAG_GATE=0.0
 """
 from __future__ import annotations
 
 import os
-import threading
-import uuid
+import time
+from uuid import UUID, uuid4
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 
-from core.schemas import AnswerResult
+from api.auth import router as auth_router
+from api.chat import router as chat_router
+from api.documents import router as documents_router
+from api.mail import MailDeliveryError
+from api.settings import get_settings
+from api.rag_runtime import STATE, get_pipeline
 from rag.pipeline import DensePipeline
+from api.rag_admission import shutdown_admission
+from api.health import router as health_router, close_health_resources
+from api.telemetry import emit, http_request_id, install_access_filter
 
-STATE: dict = {}
-_LOCK = threading.Lock()  # one CPU-bound LLM call at a time; parallel calls would just thrash
-
+install_access_filter()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # loads ~900 chunks + bge-m3 once (~20 s); embeddings come from data/index/ cache
-    STATE["pipe"] = DensePipeline(
-        llm=os.getenv("RAG_LLM", "ollama"),
-        llm_model=os.getenv("RAG_LLM_MODEL", "llama3.2"),
-        ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-        gate=float(os.getenv("RAG_GATE", "0.0")),
-    )
-    yield
-    STATE.clear()
+    if get_settings().rag_enabled:
+        STATE["pipe"] = DensePipeline(
+            llm=os.getenv("RAG_LLM", "ollama"),
+            llm_model=os.getenv("RAG_LLM_MODEL", "llama3.2"),
+            ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+            gate=float(os.getenv("RAG_GATE", "0.0")),
+        )
+    try:
+        yield
+    finally:
+        shutdown_admission()
+        close_health_resources()
+        STATE.clear()
 
 
 app = FastAPI(title="University Knowledge Assistant API", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(chat_router)
+app.include_router(documents_router)
+app.include_router(health_router)
+
+
+@app.middleware("http")
+async def auth_privacy_headers(request: Request, call_next):
+    incoming = request.headers.get("x-request-id", "")
+    try:
+        request_id = str(UUID(incoming)) if len(incoming) <= 36 else str(uuid4())
+    except ValueError:
+        request_id = str(uuid4())
+    token = http_request_id.set(request_id)
+    started = time.monotonic()
+    status, error_type = 500, None
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-Id"] = request_id
+        if request.url.path.startswith(("/api/auth", "/api/chat", "/api/admin", "/api/health")):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+    except Exception as error:
+        error_type = type(error).__name__
+        raise
+    finally:
+        route = request.scope.get("route")
+        emit("http_request", method=request.method, route=getattr(route, "path", "unmatched"),
+             status=status, elapsedMs=round((time.monotonic() - started) * 1000, 2), errorType=error_type)
+        http_request_id.reset(token)
 
 
 @app.exception_handler(HTTPException)
 async def _error(_, exc: HTTPException):
     # the UI's httpClient reads {message}
-    return JSONResponse(status_code=exc.status_code, content={"message": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={"message": exc.detail}, headers=exc.headers)
 
 
-class SendMessage(BaseModel):
-    conversationId: str
-    content: str = Field(min_length=1, max_length=2000)
-    institutionId: str | None = None  # from the school picker; None = detect from the question
+@app.exception_handler(RequestValidationError)
+async def validation_error(_, exc: RequestValidationError):
+    # Never echo raw validation input: it can contain passwords or account tokens.
+    errors = [{"field": ".".join(str(item) for item in error["loc"][1:]), "message": error["msg"]}
+              for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"message": "Dữ liệu không hợp lệ", "errors": errors})
 
 
-def _citations(r: AnswerResult, pipe: DensePipeline) -> list[dict]:
-    by_id = {s.chunk.chunk_id: s.chunk for s in r.retrieved}
-    out = []
-    for c in r.citations:
-        ch = by_id.get(c.chunk_id)
-        meta = pipe.meta.get(ch.doc_id) if ch else None
-        out.append({"chunkId": c.chunk_id, "docId": ch.doc_id if ch else None,
-                    "title": meta.title if meta else None, "sourceUrl": meta.source_url if meta else None,
-                    "section": " > ".join(ch.section_path) if ch else "", "page": ch.page_start if ch else None,
-                    "quote": c.quote})
-    return out
+@app.exception_handler(MailDeliveryError)
+async def mail_unavailable(_, exc: MailDeliveryError):
+    emit("dependency_failure", component="smtp", errorType=type(exc).__name__)
+    return JSONResponse(status_code=503, content={"message": "Chưa gửi được email. Vui lòng thử lại sau."})
 
 
-def _content(r: AnswerResult, cites: list[dict]) -> str:
-    """Plain-text answer + sources, so the current chat UI shows citations without changes."""
-    if r.status == "refused" or not cites:
-        return r.answer
-    lines = [r.answer, "", "Nguồn / Sources:"]
-    for i, c in enumerate(cites, 1):
-        where = " — ".join(x for x in (c["title"], c["section"].split(" > ")[-1] if c["section"] else "",
-                                         f"tr. {c['page']}" if c["page"] else "") if x)
-        lines.append(f"[{i}] {where}\n    “{c['quote']}”")
-    return "\n".join(lines)
-
-
-@app.post("/api/chat/messages")
-def send_message(body: SendMessage) -> dict:
-    pipe: DensePipeline = STATE["pipe"]
-    try:
-        with _LOCK:
-            r = pipe.answer(body.content, institution=body.institutionId)
-    except ValueError as e:  # unknown institutionId
-        raise HTTPException(400, str(e))
-    except RuntimeError as e:  # Ollama down / model not pulled
-        raise HTTPException(503, str(e))
-    cites = _citations(r, pipe)
-    inst = r.trace.get("institution") or {}
-    return {
-        # --- ChatMessage (frontend types/chat.ts) ---
-        "id": str(uuid.uuid4()),
-        "conversationId": body.conversationId,
-        "role": "assistant",
-        "content": _content(r, cites),
-        "createdAt": datetime.now(timezone.utc).isoformat(),
-        # --- optional extras for a future citation panel ---
-        "status": r.status,
-        "answer": r.answer,
-        "citations": cites,
-        "refusalReason": r.refusal_reason,
-        "institution": {"ids": inst.get("ids", []), "source": inst.get("source")},
-        "latencyMs": round(r.latency_ms or 0),
-    }
+@app.exception_handler(SQLAlchemyError)
+async def database_unavailable(_, exc: SQLAlchemyError):
+    emit("dependency_failure", component="database", errorType=type(exc).__name__)
+    return JSONResponse(status_code=503, content={"message": "Dịch vụ dữ liệu tạm thời không khả dụng."})
 
 
 @app.get("/api/institutions")
 def list_institutions() -> list[dict]:
-    return STATE["pipe"].institution_options()
+    return get_pipeline().institution_options()
 
 
 @app.get("/api/health")
 def health() -> dict:
-    p: DensePipeline = STATE["pipe"]
+    if not get_settings().rag_enabled:
+        return {"status": "ok", "rag": "disabled"}
+    p = get_pipeline()
     return {"status": "ok", "chunks": len(p.index.chunks), "embedder": p.index.embedder.name,
             "llm": p.llm.name if p.llm else None, "config": p.config_id}
