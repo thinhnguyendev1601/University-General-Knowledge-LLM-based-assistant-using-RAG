@@ -15,6 +15,7 @@ import time
 
 from core.schemas import AnswerResult, Citation, ScoredChunk
 from core.textnorm import match_form
+from core.work_budget import stage
 from eval.testset import DocText
 from rag import institutions
 from rag.llm import LLMClient, OllamaClient
@@ -152,7 +153,8 @@ class DensePipeline:
                 r.answer = (f"Hệ thống chưa có tài liệu của {names}." if lang == "vi"
                             else f"There are no documents for {names} in the system yet.")
                 return r
-        hits = self.retrieve(query, doc_ids)
+        with stage("retrievalMs"):
+            hits = self.retrieve(query, doc_ids)
         top = hits[0].score if hits else None
         if not hits or top < self.gate:
             return self._refuse("low_retrieval_score", hits, t0, top_score=top, institution=inst)
@@ -169,7 +171,8 @@ class DensePipeline:
             about = "The question is about: " + "; ".join(institutions.BY_ID[i].name_en for i in inst["ids"]) + "\n"
         user = f"Sources:\n\n{self._sources(hits)}\n\n{about}Question: {query}"
         try:
-            out = self.llm.generate_json(SYSTEM, user, SCHEMA)
+            with stage("generationMs"):
+                out = self.llm.generate_json(SYSTEM, user, SCHEMA)
         except ValueError as e:  # invalid JSON from the model -> fail safe
             return self._refuse("invalid_model_output", hits, t0, top_score=top, error=str(e), institution=inst)
         out["answer"] = _plain_answer(out.get("answer", ""))

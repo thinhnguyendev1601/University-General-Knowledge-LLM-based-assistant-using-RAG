@@ -6,6 +6,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import Callable, Protocol
+from core.work_budget import remaining_seconds
 
 
 class LLMClient(Protocol):
@@ -31,7 +32,7 @@ class OllamaClient:
         req = urllib.request.Request(f"{self.url}/api/chat", data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with urllib.request.urlopen(req, timeout=remaining_seconds(self.timeout)) as r:
                 content = json.loads(r.read())["message"]["content"]
         except urllib.error.URLError as e:
             raise RuntimeError(f"Ollama not reachable at {self.url} ({e}); is `ollama serve` running and "
