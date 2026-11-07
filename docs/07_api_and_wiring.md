@@ -1,5 +1,17 @@
 # RAG API and frontend wiring (prototype, 2026-10-21; real LLM tested 2026-11-06)
 
+> Account update: start PostgreSQL and apply migrations before using the main
+> frontend. Chat now requires a real login session and CSRF header. Follow
+> [local setup](../README.md); the original anonymous
+> chat examples below describe the payload shape, not an authentication bypass.
+>
+> Conversation update: create a server-owned conversation before POSTing messages.
+> History is now persisted, and unknown/foreign conversation ids return 404.
+> See [the changes summary](08_project_changes_and_handover.md) for the added
+> conversation persistence, retry and ownership controls. The main frontend is now connected to server history.
+> The current queue and history integration supersede the original
+> stateless/local-history wiring and timeout details below.
+
 How the React chat talks to the RAG core, how to run it locally, and what is left for the
 frontend and backend leads.
 
@@ -16,7 +28,7 @@ uvicorn api.app:app --port 8000
 
 # 3. frontend - Vite proxies /api/* to :8000
 cd projectsoftwareengineeringfrontend && npm ci && npm run dev
-#    VITE_USE_MOCK_CHAT=true npm run dev            -> old mock replies, no backend needed
+# Main frontend requires the account/conversation API; no mock-chat runtime switch.
 ```
 
 Check: `curl localhost:8000/api/health`.
@@ -88,16 +100,16 @@ questions about them are refused with `institution_not_covered` before any LLM c
 Chunk count, embedder, LLM and pipeline config id.
 
 ## Frontend changes made (services + types only, per the frontend CLAUDE.md)
-- `services/chat.ts`: `sendMessage` calls the API (optional 3rd arg `institutionId`);
-  `getInstitutions()` added. Conversations stay local (mock) - no backend endpoint yet.
-- `services/httpClient.ts`: per-request timeout; chat uses 180 s (`VITE_CHAT_TIMEOUT_MS`),
-  everything else keeps 15 s. A CPU LLM takes 30-120 s per answer.
+- `services/chat.ts`: server conversation CRUD/history; `sendMessage` takes
+  requestId as its 3rd argument and optional institutionId as its 4th.
+- `services/httpClient.ts`: chat budget comes from authenticated GET `/api/chat/config`;
+  other requests keep 15 s. B4 adds a bounded RAG queue and processing deadline.
 - `types/chat.ts`: optional `status`, `citations`, `refusalReason`, `institution`; `Institution`.
 - `vite.config.ts`: dev proxy `/api` → `http://localhost:8000`.
-- Verified: typecheck, lint, prettier, 56/56 vitest.
+- Original prototype verification: 56/56 vitest. Later additions are summarized in [the changes summary](08_project_changes_and_handover.md).
 
 ## Left for the frontend lead
-1. **School picker** above the chat input: `getInstitutions()`, pass the chosen id as the 3rd
+1. **School picker** above the chat input: `getInstitutions()`, pass the chosen id as the 4th
    argument of `sendMessage`. Grey out `covered: false` schools.
 2. **Source panel** rendering `message.citations` (title, section, page, quote, `sourceUrl`
    link) instead of relying on the plain-text block in `content`.
@@ -131,6 +143,8 @@ Rules that keep it working:
 6. Upload/ingestion later: a new document must get a manifest row with `role=indexed`, then its
    canonical text in `data/processed/`; the index re-embeds automatically (cache key = content).
 
-Still to build on the backend side: auth/JWT, Postgres, conversation storage
-(`GET/DELETE /api/chat/conversations…`), feedback, logging, document upload, and moving the
+Domain-only account registration (no email verification), cookie sessions and PostgreSQL migrations
+are now implemented; see the account setup guide above. Conversation storage and
+ownership APIs are implemented in `api/chat.py`; see the conversation handoff.
+Still to build: feedback, broader logging, document upload, and moving the
 in-memory index to pgvector behind the same `retrieve()` call.

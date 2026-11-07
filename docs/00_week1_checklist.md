@@ -15,7 +15,7 @@ next week from a clear guide, and (c) you can already score *any* pipeline with 
 ## Suggested order (time-boxed)
 | Step | Time | What |
 |---|---|---|
-| 1 | 15 min | Unpack kit, install deps, run `pytest`. Add `.gitignore.snippet` lines to your `.gitignore`. |
+| 1 | 15 min | Unpack kit, install deps, run `pytest`. The root `.gitignore` already excludes corpus files and generated artifacts. |
 | 2 | 60–75 min | Download documents. Start with the 3 direct-PDF rows (`moet-tt08-2021`, `iu-acad-reg-2021`, `iu-scse-handbook-2024`), then the hub-page rows. Ask one teammate to fetch the two hold-out documents in parallel. |
 | 3 | 20 min | Fill in the manifest as you go (do not batch it at the end). |
 | 4 | 15 min | `python scripts/extract_text.py`; read the warnings table. |
