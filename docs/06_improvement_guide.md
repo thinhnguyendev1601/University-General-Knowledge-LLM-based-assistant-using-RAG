@@ -16,7 +16,7 @@ Each item: **what's wrong (verified)** → **why it matters** → **hint** → *
 
 ### P0 — fix before the test set grows past ~30 questions
 
-**A1. `eval.testset grep` has no role filter.**
+**A1. `eval.testset grep` has no role filter.** ✅ *done 2026-10-12*
 It searches every `.txt`, including `holdout` and `excluded` documents. On 2026-09-22,
 `grep "cảnh báo học vụ"` returned 4 hits — all in a holdout document, 0 in the indexed
 corpus. Absence proofs (`absent_in_domain`, `false_premise`, `holdout_only`) are only valid
@@ -24,16 +24,21 @@ against `role=indexed` text.
 *Hint:* `--role` (default `indexed`) plus `--manifest`; reuse `load_manifest`.
 *Test:* `grep "cảnh báo học vụ"` → 0 hits; `--role holdout` → 4 hits.
 
-**A2. `KeywordBaseline` (and later your pipeline) indexes every `.txt`.**
+**A2. `KeywordBaseline` (and later your pipeline) indexes every `.txt`.** ✅ *done 2026-10-12*
 `eval/pipeline_stub.py` loads all of `data/processed/` unless `docs=` is passed, so a
 baseline run can retrieve from holdout and excluded files and "answer" `holdout_only`
-questions. This is the same bug as A1 in a more damaging place: it silently raises
-the score.
+questions. This is the same bug as A1 in a more damaging place: it silently changes
+what is being measured. Verified 2026-10-12: 3286 chunks from 18 docs, of which 1145 holdout
+and 177 excluded (40%); a made-up HCMUT master's question is 'answered' from
+hcmut-master-reg-2022 at score 0.68. Answerable questions get extra distractors (scores
+drop), holdout_only questions get answered (unsupported_answer_rate rises), and a refusal
+threshold calibrated on this corpus is wrong for the real one.
 *Hint:* build the document list from the manifest's `indexed` rows; fail loudly when a
 holdout doc_id appears in `retrieved`.
-*Test:* predict TM-012's result before and after.
+*Test:* NOT on TM-012 - it is in the `test` split. Use made-up queries about holdout
+content (e.g. HCMUT master's, MIT EECS) and count chunk roles before and after.
 
-**A3. Key-fact matching is substring matching.**
+**A3. Key-fact matching is substring matching.** ✅ *done 2026-10-12*
 `fact_present("108", "1080")`, `fact_present("1,0", "11,0")`,
 `fact_present("7 weeks", "17 weeks")` are all `True` (verified). TM-002's key fact is
 exactly this shape.
@@ -41,7 +46,7 @@ exactly this shape.
 that side. Keep the rest substring-based, because Vietnamese words are multi-syllable.
 *Test:* write the three cases above as unit tests first; they must fail before your fix.
 
-**A4. No key facts ⇒ auto-correct.**
+**A4. No key facts ⇒ auto-correct.** ✅ *done 2026-10-12*
 `key_fact_recall([], answer) == 1.0` (verified), so an answerable question with no key
 facts is `auto_correct` whenever the system answers anything. Build only *warns*.
 *Hint:* make it an error for answerable questions, or exclude such questions from
@@ -56,6 +61,15 @@ facts is `auto_correct` whenever the system answers anything. Build only *warns*
 that are much longer than the language's normal maximum.
 *Test:* each guard should flag exactly its document and nothing else in the corpus.
 Note how the doc in (c) has a healthy diacritic ratio — guards cover each other.
+
+**A15. Unanswerable questions could carry evidence.** ✅ *done 2026-10-12*
+An `out_of_domain` row citing a passage contradicts itself; now a build error (only
+`holdout_only` cites a doc, and it must). Found by the BR-003 playground row.
+
+**A16. Fuzzy quotes with a wrong number only warned.** ✅ *done 2026-10-12*
+`0,8 → 0,5` scores fuzzy:99, the same as a harmless typo. Now: different numbers between
+quote and document = build error; other fuzzy matches warn and print what the document
+says. Negations/comparatives (`dưới → trên`, fuzzy:96) still only warn - reviewer's job.
 
 ### P1 — before the first real ablation (week 4–5)
 
@@ -79,7 +93,7 @@ with tiny quotes.
 *Hint:* minimum quote length (characters or tokens), and/or require the quote to overlap
 the evidence span. Report how many citations were too short.
 
-**A9. Crashes look like hallucinations.**
+**A9. Crashes look like hallucinations.** ✅ *done 2026-10-12*
 `evaluate_one` records a crash as `refused=False`; for an unanswerable question
 `summarize` counts that as an unsupported answer. A buggy pipeline inflates the project's
 headline number.

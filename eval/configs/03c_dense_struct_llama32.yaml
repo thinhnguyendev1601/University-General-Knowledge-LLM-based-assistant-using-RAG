@@ -1,0 +1,15 @@
+# Prototype answer() with the model the team has installed (llama3.2 3B, Q4). Same retrieval as 02b.
+# Needs: `ollama serve` running and `ollama pull llama3.2`.
+run_name: 03c_dense_struct_llama32
+testset: eval/questions/testset.jsonl
+split: dev
+pipeline: rag.pipeline:build_dense_pipeline
+pipeline_kwargs:
+  top_k: 10
+  k_context: 5
+  gate: 0.0            # off; calibrate later with eval/sweep_gate.py on dev (docs/06 §C step 6)
+  llm: ollama
+  llm_model: llama3.2
+k_values: [1, 3, 5, 10]
+min_overlap_frac: 0.5
+out_dir: eval/runs

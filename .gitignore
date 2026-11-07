@@ -1,5 +1,6 @@
 data/raw/
 data/processed/
+data/index/
 eval/runs/
 
 # Python / tooling artifacts
@@ -16,3 +17,12 @@ __pycache__/
 /instruction_for_claude.md
 /eval/questions/annotations.csv
 /eval/questions/testset.jsonl
+/playground
+
+# Environments, secrets, notebook scratch
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+node_modules/
+/eval/first_part.ipynb

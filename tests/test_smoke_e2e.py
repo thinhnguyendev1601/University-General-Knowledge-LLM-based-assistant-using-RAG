@@ -100,6 +100,7 @@ def test_full_flow(tmp_path):
     def run(pipeline, kwargs, name):
         cfg = tmp_path / f"{name}.yaml"
         cfg.write_text(yaml.safe_dump({"run_name": name, "testset": str(out), "split": "all", "pipeline": pipeline, "pipeline_kwargs": kwargs,
+                                       "manifest": str(manifest),  # A2: the guard must check the FAKE corpus's manifest
                                        "out_dir": str(tmp_path / "runs")}), encoding="utf-8")
         assert run_eval.main(["--config", str(cfg), "--final"]) == 0
         d = sorted((tmp_path / "runs").glob(f"*_{name}"))[-1]
@@ -112,5 +113,5 @@ def test_full_flow(tmp_path):
     r = run("eval.pipeline_stub:build_always_refuse", {}, "refuse")
     assert r["refusal_recall"] == 1.0 and r["false_refusal_rate"] == 1.0 and r["answer_accuracy_auto"] == 0.0
 
-    k = run("eval.pipeline_stub:build_keyword_baseline", {"processed_dir": str(proc), "docs": ["test-vi-2021", "test-en-2024"], "refuse_below": 0.6}, "kw")
+    k = run("eval.pipeline_stub:build_keyword_baseline", {"processed_dir": str(proc), "manifest": str(manifest), "docs": ["test-vi-2021", "test-en-2024"], "refuse_below": 0.6}, "kw")
     assert k["n"] == 6 and k["hit@5"] is not None

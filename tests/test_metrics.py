@@ -55,3 +55,27 @@ def test_summarize_refusal_confusion():
     s = summarize(recs)
     assert s["false_refusal_rate"] == 0.5 and s["unsupported_answer_rate"] == 0.5
     assert s["refusal_precision"] == 0.5 and s["refusal_recall"] == 0.5
+
+
+# ---------------------------------------------------------------- Phase 1 (A3, A4, A9)
+def test_numeric_facts_match_whole_numbers_only():  # A3
+    assert not fact_present("108", "cần 1080 tín chỉ")
+    assert not fact_present("1,0", "dưới 11,0")
+    assert not fact_present("7 weeks", "at least 17 weeks")
+    assert not fact_present("7", "7,5 điểm")          # a decimal is a different number
+    assert not fact_present("5", "đạt 1,5")
+    assert fact_present("108", "requires 108 credits.")  # punctuation after is fine
+    assert fact_present("1,0", "dưới 1,0.")
+    assert fact_present("7 weeks", "(7 weeks)")
+
+
+def test_no_key_facts_is_not_auto_correct():  # A4
+    assert key_fact_recall([], "anything at all") is None
+
+
+def test_crash_is_not_an_unsupported_answer():  # A9
+    crash = {"answerable": False, "refused": False, "metrics": {}, "latency_ms": 5, "error": "Traceback ..."}
+    ok = {"answerable": False, "refused": True, "metrics": {"auto_correct": True}, "latency_ms": 5}
+    s = summarize([crash, ok])
+    assert s["n_errors"] == 1
+    assert s["unsupported_answer_rate"] == 0.0 and s["confusion"]["FN_unsupported_answer"] == 0

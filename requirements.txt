@@ -4,3 +4,6 @@ pymupdf>=1.24
 python-docx>=1.1
 rapidfuzz>=3.6
 pytest>=8.0
+# RAG core (rag/): CPU torch is enough -> pip install torch --index-url https://download.pytorch.org/whl/cpu
+numpy>=1.26
+sentence-transformers>=3.0

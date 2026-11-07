@@ -4,6 +4,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [react()],
+  // dev: /api/* -> FastAPI (uvicorn api.app:app --port 8000, chạy ở thư mục gốc repo)
+  server: {
+    proxy: { '/api': 'http://localhost:8000' },
+  },
   resolve: {
     alias: {
       '@': resolve(import.meta.dirname, 'src'),

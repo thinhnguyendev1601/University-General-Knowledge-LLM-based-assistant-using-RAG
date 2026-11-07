@@ -5,5 +5,6 @@ export {
   getMessages,
   sendMessage,
   deleteConversation,
+  getInstitutions,
 } from './chat'
 export { httpClient, ApiError } from './httpClient'

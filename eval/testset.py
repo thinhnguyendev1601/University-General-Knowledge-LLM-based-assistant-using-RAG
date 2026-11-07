@@ -15,6 +15,7 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 import sys
 import unicodedata
 from collections import Counter, defaultdict
@@ -146,6 +147,10 @@ def row_to_question(row: dict) -> TestQuestion:
 
 
 # ------------------------------------------------------------------------ validation
+def _numbers(s: str) -> list[str]:
+    return re.findall(r"\d+(?:[.,]\d+)?", s)
+
+
 def validate(q: TestQuestion, docs: dict[str, DocText], manifest: dict[str, DocumentMeta]) -> tuple[list[str], list[str]]:
     errs, warns = [], []
     if q.category in {"unanswerable", "adversarial"}:
@@ -164,7 +169,7 @@ def validate(q: TestQuestion, docs: dict[str, DocText], manifest: dict[str, Docu
         if not q.gold_answer:
             errs.append("gold_answer required")
         if not q.key_facts:
-            warns.append("no key_facts (auto-scoring will be weak)")
+            errs.append("key_facts required for answerable questions (A4: none would score as always correct)")
         if not q.evidence:
             errs.append("at least one evidence span required")
         if q.category in {"multi_section", "multi_doc"} and len(q.evidence) < 2:
@@ -179,6 +184,11 @@ def validate(q: TestQuestion, docs: dict[str, DocText], manifest: dict[str, Docu
     else:
         if q.key_facts:
             warns.append("key_facts ignored for unanswerable questions")
+        # A15: "the corpus can't answer this" + "here is the passage that answers it" contradict
+        if q.evidence and q.unanswerable_type != "holdout_only":
+            errs.append(f"{q.unanswerable_type} questions must have no evidence (only holdout_only cites a doc)")
+        if q.unanswerable_type == "holdout_only" and not q.evidence:
+            errs.append("holdout_only needs evidence from the holdout doc that has the answer")
     for i, ev in enumerate(q.evidence, 1):
         meta = manifest.get(ev.doc_id)
         if meta is None:
@@ -202,7 +212,12 @@ def validate(q: TestQuestion, docs: dict[str, DocText], manifest: dict[str, Docu
             if note == "multiple":
                 warns.append(f"evidence {i}: quote occurs more than once in {ev.doc_id}; lengthen it")
             elif note.startswith("fuzzy"):
-                warns.append(f"evidence {i}: quote matched only fuzzily ({note}); copy it from data/processed/{ev.doc_id}.txt")
+                real = collapse_ws(dt.text[span[0]:span[1]])
+                # A16: a fuzzy match with different numbers is a wrong fact, not a typo
+                if _numbers(ev.quote) != _numbers(real):
+                    errs.append(f"evidence {i}: numbers differ from the document {_numbers(ev.quote)} vs {_numbers(real)} - document says: {real[:200]!r}")
+                else:
+                    warns.append(f"evidence {i}: quote matched only fuzzily ({note}); document says: {real[:200]!r}")
     if q.category == "cross_lingual" and q.evidence:
         dl = {manifest[e.doc_id].lang for e in q.evidence if e.doc_id in manifest}
         if q.lang in dl and len(dl) == 1:
@@ -322,13 +337,25 @@ def cmd_grep(a: argparse.Namespace) -> int:
     needle = collapse_ws(a.pattern)
     needle = _fold(needle) if a.accent_insensitive else needle.casefold()
     hits = 0
+    # Manifest = load_manifest(Path(a.manifest)) #load the manifest to ensure the processed docs are valid
+    manifest = load_manifest(Path(a.manifest))  
     for p in sorted(proc.glob("*.txt")):
+        # filter per FILE, before reading it - no point searching a doc we will throw away
+        meta = manifest.get(p.stem)
+        if meta is None:
+            print(f"warning: {p.name} has no manifest row - skipped (fill data/manifest.csv)")
+            continue
+        if a.role != "all" and meta.role != a.role:
+            continue
         dt = DocText(p.read_text(encoding="utf-8"))
         hay = _fold(dt.collapsed) if a.accent_insensitive else dt.collapsed.casefold()
         start = 0
         while (i := hay.find(needle, start)) >= 0 and hits < a.max:
+            # if p.stem not in Manifest or Manifest[p.stem].role != a.role and a.role != "all":   # moved above the loop
+            #     start = i + len(needle)
+            #     continue
             lo, hi = max(0, i - 80), min(len(hay), i + len(needle) + 80)
-            print(f"{p.stem} @{dt.idx[i]}: ...{dt.collapsed[lo:hi]}...")
+            print(f"{p.stem} [{meta.role}] @{dt.idx[i]}: ...{dt.collapsed[lo:hi]}...") 
             hits += 1
             start = i + len(needle)
     print(f"{hits} hit(s)" + (" (capped)" if hits >= a.max else ""))
@@ -348,6 +375,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     b.add_argument("--seed", type=int, default=42)
     b.set_defaults(fn=cmd_build)
     g = sub.add_parser("grep")
+    g.add_argument("--manifest", default=str(ROOT / "data/manifest.csv"))
+    # g.add_argument("--role", default="indexed", choices=["indexed", "holdout", "all"])
+    g.add_argument("--role", default="indexed", choices=["indexed", "holdout", "excluded", "all"])  # + excluded, so the 3 roles add up to "all"
     g.add_argument("pattern")
     g.add_argument("--processed", default=str(ROOT / "data/processed"))
     g.add_argument("--accent-insensitive", action="store_true")

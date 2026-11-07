@@ -5,6 +5,7 @@ overlap is at least `min_frac` of the evidence span's length (default 0.5).
 """
 from __future__ import annotations
 
+import re
 import statistics
 from collections import defaultdict
 from typing import Iterable, Optional
@@ -55,16 +56,28 @@ def retrieval_metrics(
 
 
 # ----------------------------------------------------------------------- answers
+def _fact_pattern(f: str) -> re.Pattern:
+    """A3: a fact that starts/ends with a digit must not touch another number on that side,
+    so '108' doesn't match '1080', '1,0' doesn't match '11,0' and '7' doesn't match '7,5'.
+    Text edges stay substring-based (Vietnamese words are multi-syllable)."""
+    p = re.escape(f)
+    if f[0].isdigit():
+        p = r"(?<!\d)(?<!\d[.,])" + p
+    if f[-1].isdigit():
+        p = p + r"(?!\d)(?![.,]\d)"
+    return re.compile(p)
+
+
 def fact_present(fact: str, answer: str) -> bool:
     """A fact may list alternatives separated by '|' (e.g. '2.0|2,0'). Case/space-insensitive,
     diacritic-SENSITIVE (Vietnamese diacritics change meaning)."""
     a = match_form(answer)
-    return any(alt.strip() and match_form(alt) in a for alt in fact.split("|"))
+    return any(_fact_pattern(match_form(alt)).search(a) for alt in fact.split("|") if alt.strip())
 
 
-def key_fact_recall(key_facts: list[str], answer: str) -> float:
+def key_fact_recall(key_facts: list[str], answer: str) -> Optional[float]:
     if not key_facts:
-        return 1.0
+        return None  # A4: nothing to check is "unknown", not "perfect"
     return sum(fact_present(f, answer) for f in key_facts) / len(key_facts)
 
 
@@ -119,9 +132,11 @@ def _pct(xs: list[float], q: float) -> Optional[float]:
 
 def summarize(records: list[dict], ks: Iterable[int] = (1, 3, 5, 10)) -> dict:
     """records: per-question dicts produced by run_eval (see run_eval.evaluate_one)."""
-    ans = [r for r in records if r["answerable"]]
-    una = [r for r in records if not r["answerable"]]
     ok = [r for r in records if not r.get("error")]
+    # A9: a crash is neither a refusal nor an answer - keep it out of the confusion matrix
+    # (reported as n_errors) so a buggy pipeline can't look like a hallucinating one
+    ans = [r for r in ok if r["answerable"]]
+    una = [r for r in ok if not r["answerable"]]
 
     tp = sum(1 for r in una if r["refused"])  # refused when it should
     fn = sum(1 for r in una if not r["refused"])  # answered an unanswerable question  => unsupported answer
@@ -136,8 +151,9 @@ def summarize(records: list[dict], ks: Iterable[int] = (1, 3, 5, 10)) -> dict:
         "n_answerable": len(ans),
         "n_unanswerable": len(una),
         "n_errors": len(records) - len(ok),
-        "answer_accuracy_auto": _mean([1.0 if r["metrics"].get("auto_correct") else 0.0 for r in ans]),
-        "abstention_accuracy": _mean([1.0 if r["refused"] == (not r["answerable"]) else 0.0 for r in records]),
+        # crashes on answerable questions still count as wrong answers here
+        "answer_accuracy_auto": _mean([1.0 if r["metrics"].get("auto_correct") else 0.0 for r in records if r["answerable"]]),
+        "abstention_accuracy": _mean([1.0 if r["refused"] == (not r["answerable"]) else 0.0 for r in ok]),
         "refusal_precision": round(prec, 4) if prec is not None else None,
         "refusal_recall": round(rec, 4) if rec is not None else None,
         "refusal_f1": round(f1, 4) if f1 is not None else None,
@@ -152,7 +168,8 @@ def summarize(records: list[dict], ks: Iterable[int] = (1, 3, 5, 10)) -> dict:
     m["mrr"] = _mean([r["metrics"]["rr"] for r in with_ev])
 
     answered_ans = [r for r in ans if not r["refused"]]
-    m["key_fact_recall_when_answered"] = _mean([r["metrics"]["key_fact_recall"] for r in answered_ans])
+    m["key_fact_recall_when_answered"] = _mean([r["metrics"]["key_fact_recall"] for r in answered_ans
+                                                if r["metrics"].get("key_fact_recall") is not None])
     vc = [r for r in answered_ans if r["metrics"].get("forbidden_hit") is not None]
     m["forbidden_fact_rate"] = _mean([1.0 if r["metrics"]["forbidden_hit"] else 0.0 for r in vc])
 

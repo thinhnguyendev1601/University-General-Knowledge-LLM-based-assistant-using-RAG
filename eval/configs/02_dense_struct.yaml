@@ -1,0 +1,13 @@
+# Step 1+2 of docs/06 §C: structure-aware chunks + bge-m3 dense retrieval, NO generation.
+# Measures retrieval only (hit@k, MRR); answers are the raw top chunk, so ignore answer metrics.
+run_name: 02_dense_struct
+testset: eval/questions/testset.jsonl
+split: dev
+pipeline: rag.pipeline:build_dense_pipeline
+pipeline_kwargs:
+  top_k: 10
+  llm: none
+  institution_filter: false  # baseline: no school filter
+k_values: [1, 3, 5, 10]
+min_overlap_frac: 0.5
+out_dir: eval/runs

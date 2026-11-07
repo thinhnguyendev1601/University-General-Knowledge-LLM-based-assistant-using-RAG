@@ -26,6 +26,7 @@ import yaml
 
 from core.schemas import AnswerResult, TestQuestion
 from eval.metrics import citation_metrics, forbidden_hit, key_fact_recall, retrieval_metrics, summarize, summarize_by
+from eval.testset import load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,16 +45,28 @@ def load_testset(path: Path, split: str, min_status: str) -> list[TestQuestion]:
     return qs if split == "all" else [q for q in qs if q.split == split]
 
 
-def evaluate_one(pipe, q: TestQuestion, ks, min_frac: float) -> dict:
+def evaluate_one(pipe, q: TestQuestion, ks, min_frac: float, manifest: dict | None = None) -> dict:
     rec = {"id": q.id, "question": q.question, "lang": q.lang, "category": q.category, "answerable": q.answerable,
            "unanswerable_type": q.unanswerable_type, "split": q.split, "error": None}
     t0 = time.perf_counter()
     try:
         res: AnswerResult = pipe.answer(q.question)
+        # chunk_doc_ids = {c.chunk.doc_id for c in res.retrieved}
+        # if chunk_doc_ids not in {ev.doc_id for ev in q.evidence}:   # set-in-set -> TypeError (unhashable), swallowed by except below;
+        #     print(...)                                             # and the rule is wrong: retrieving OTHER indexed docs is a normal miss
+        #     SystemExit(...)                                        # missing `raise` -> creates the exception and does nothing
     except Exception:  # a crash counts as a failed question, not a crashed run
         rec.update(refused=False, answer="", status="error", latency_ms=(time.perf_counter() - t0) * 1000,
                    error=traceback.format_exc(limit=3), metrics={}, citations=[], retrieved=[])
         return rec
+    # A2 guard: OUTSIDE the try, so a leak stops the whole run instead of failing one question.
+    # The rule is about the doc's ROLE, not about the question's evidence.
+    if manifest is not None:
+        leaked = {s.chunk.doc_id for s in res.retrieved
+                  if s.chunk.doc_id not in manifest or manifest[s.chunk.doc_id].role != "indexed"}
+        if leaked:
+            raise SystemExit(f"{q.id}: pipeline retrieved non-indexed docs {sorted(leaked)} - run is invalid")
+
     wall = (time.perf_counter() - t0) * 1000
     refused = res.status == "refused"
     m: dict = {}
@@ -65,6 +78,7 @@ def evaluate_one(pipe, q: TestQuestion, ks, min_frac: float) -> dict:
             m["forbidden_hit"] = forbidden_hit(q.forbidden_facts, res.answer)
         if not refused:
             m.update(citation_metrics(res, q.evidence, min_frac))
+        # kfr is None when there are no key facts (A4) -> never auto-correct
         m["auto_correct"] = (not refused) and kfr == 1.0 and not m.get("forbidden_hit", False)
     else:
         m["auto_correct"] = refused
@@ -99,6 +113,7 @@ def print_summary(s: dict) -> None:
 
 
 def main(argv=None) -> int:
+    # cfg.get("manifest", "data/manifest.csv")   # cfg doesn't exist yet here (NameError), and the result was thrown away
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--final", action="store_true", help="allow running on the frozen TEST split (logged)")
@@ -120,6 +135,7 @@ def main(argv=None) -> int:
     ks = cfg.get("k_values", [1, 3, 5, 10])
     min_frac = float(cfg.get("min_overlap_frac", 0.5))
     pipe = load_pipeline(cfg["pipeline"], cfg.get("pipeline_kwargs"))
+    manifest = load_manifest(ROOT / cfg.get("manifest", "data/manifest.csv"))  # after cfg is loaded; config may override
 
     run_id = f"{datetime.now():%Y%m%d-%H%M%S}_{cfg.get('run_name', 'run')}"
     out_dir = ROOT / cfg.get("out_dir", "eval/runs") / run_id
@@ -127,7 +143,7 @@ def main(argv=None) -> int:
 
     records = []
     for i, q in enumerate(qs, 1):
-        records.append(evaluate_one(pipe, q, ks, min_frac))
+        records.append(evaluate_one(pipe, q, ks, min_frac, manifest))
         if i % 10 == 0 or i == len(qs):
             print(f"  {i}/{len(qs)}", end="\r", flush=True)
 

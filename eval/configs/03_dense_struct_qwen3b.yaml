@@ -1,0 +1,15 @@
+# Prototype answer(): same retrieval as 02 + local LLM (Ollama) + quote verification.
+# Needs: `ollama serve` running and `ollama pull qwen2.5:3b`.
+run_name: 03_dense_struct_qwen3b
+testset: eval/questions/testset.jsonl
+split: dev
+pipeline: rag.pipeline:build_dense_pipeline
+pipeline_kwargs:
+  top_k: 10
+  k_context: 5
+  gate: 0.0            # off; calibrate later with eval/sweep_gate.py on dev (docs/06 §C step 6)
+  llm: ollama
+  llm_model: qwen2.5:3b
+k_values: [1, 3, 5, 10]
+min_overlap_frac: 0.5
+out_dir: eval/runs

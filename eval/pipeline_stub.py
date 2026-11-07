@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core.schemas import AnswerResult, Chunk, Citation, ScoredChunk, make_chunk_id
 from core.textnorm import normalize_text
+from eval.testset import load_manifest
 
 _TOK = re.compile(r"\w+", re.UNICODE)
 
@@ -54,11 +55,20 @@ def paragraph_chunks(doc_id: str, text: str, min_chars: int = 200, max_chars: in
 
 
 class KeywordBaseline:
-    def __init__(self, processed_dir: str = "data/processed", top_k: int = 5, refuse_below: float = 0.5, docs: list[str] | None = None):
+    def __init__(self, processed_dir: str = "data/processed", manifest: str = "data/manifest.csv", top_k: int = 5, refuse_below: float = 0.5, docs: list[str] | None = None):
+        # from eval.testset import load_manifest   # moved to the top-level imports
         self.top_k, self.refuse_below = top_k, refuse_below
         self.chunks: list[Chunk] = []
+        # manifest = load_manifest(Path(manifest))   # reused the name: str path became a dict
+        meta = load_manifest(Path(manifest))
         for p in sorted(Path(processed_dir).glob("*.txt")):
-            if docs and p.stem not in docs:
+            if docs is not None and p.stem not in docs:
+                continue
+            if p.stem not in meta:
+                print(f"Warning: {p.stem} not in manifest, please check if the document is in the manifest, skipping")
+                continue
+            # holdout/excluded being skipped is the normal case, not a warning - printing it 12x per run is noise
+            if meta[p.stem].role != "indexed":
                 continue
             self.chunks += paragraph_chunks(p.stem, p.read_text(encoding="utf-8"))
         self.toks = [set(tokenize(c.text)) for c in self.chunks]

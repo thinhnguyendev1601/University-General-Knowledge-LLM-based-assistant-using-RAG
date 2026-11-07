@@ -68,10 +68,11 @@ async function parseError(response: Response): Promise<ApiError> {
 async function send(
   endpoint: string,
   options: RequestInit,
-  token: string | null
+  token: string | null,
+  timeoutMs: number
 ): Promise<Response> {
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     return await fetch(`${BASE_URL}${endpoint}`, {
@@ -90,16 +91,17 @@ async function send(
 
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<T> {
   const { token } = readTokens()
-  let response = await send(endpoint, options, token)
+  let response = await send(endpoint, options, token, timeoutMs)
 
   // Token hết hạn → thử refresh một lần rồi gọi lại
   if (response.status === 401) {
     const newToken = await refreshAccessToken()
     if (newToken) {
-      response = await send(endpoint, options, newToken)
+      response = await send(endpoint, options, newToken, timeoutMs)
     }
   }
 
@@ -118,8 +120,12 @@ async function request<T>(
 export const httpClient = {
   get: <T>(endpoint: string) => request<T>(endpoint),
 
-  post: <T>(endpoint: string, body: unknown) =>
-    request<T>(endpoint, { method: 'POST', body: JSON.stringify(body) }),
+  post: <T>(endpoint: string, body: unknown, timeoutMs?: number) =>
+    request<T>(
+      endpoint,
+      { method: 'POST', body: JSON.stringify(body) },
+      timeoutMs
+    ),
 
   delete: <T>(endpoint: string) => request<T>(endpoint, { method: 'DELETE' }),
 }
