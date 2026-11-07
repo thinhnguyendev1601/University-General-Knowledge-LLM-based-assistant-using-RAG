@@ -4,9 +4,11 @@ Website trợ lý hỏi đáp cho trường đại học, giao diện kiểu Cha
 câu hỏi về lịch học, học bổng, thủ tục, quy chế và nhận câu trả lời từ kho dữ
 liệu của trường.
 
-**Phạm vi: chỉ frontend.** Toàn bộ UI viết bằng React + TypeScript. Backend chưa
-có nên mọi API đi qua mock tại `src/mocks/`. Xem `BACKEND_BLOCKED_FEATURES.md`
-để biết tính năng nào đang chờ backend.
+UI viết bằng React + TypeScript. Đăng ký, đăng nhập bằng cookie,
+đăng xuất và đặt lại mật khẩu đã nối FastAPI/PostgreSQL thật. Chat nối API RAG;
+lịch sử được lưu trên PostgreSQL và tải lại theo phiên đăng nhập. Xem [hướng dẫn chạy ở README gốc](../README.md)
+để khởi động database và áp dụng migration trước khi mở giao diện. Đăng ký chỉ
+kiểm tra tên miền `university.edu.vn`, không yêu cầu xác minh email.
 
 ---
 
@@ -72,15 +74,17 @@ Dừng server: nhấn `Ctrl + C` trong terminal.
 
 ### 3.1 Đăng nhập thử
 
-Trang `/` được bảo vệ nên vào lần đầu sẽ bị chuyển về `/login`. Dùng một trong
-hai tài khoản thử nghiệm (hiển thị ngay dưới form đăng nhập):
+Trang `/` được bảo vệ nên vào lần đầu sẽ chuyển về `/login`. Mở `/register`,
+đăng ký email có tên miền chính xác `university.edu.vn` và mật khẩu 15–128 ký tự.
+Tài khoản được kích hoạt ngay, có thể đăng nhập mà không mở email. Các tài
+khoản/mật khẩu demo cũ được hiển thị lại thành hai dòng tham khảo trên trang
+đăng nhập; database hiện không tự tạo các tài khoản này.
 
-| Role | Email | Mật khẩu | Vào được |
-|---|---|---|---|
-| `admin` | `admin@university.edu.vn` | `admin123` | `/` và `/admin` |
-| `user` | `user@university.edu.vn` | `user123` | chỉ `/` |
-
-Đây là dữ liệu mock trong `src/mocks/index.ts`, **không phải xác thực thật**.
+Frontend phục hồi phiên bằng `/api/auth/me`; không lưu token đăng nhập vào
+localStorage. Lịch sử lấy từ server; đăng xuất/đổi tài khoản xóa bản hiển thị
+trong RAM, không xóa lịch sử PostgreSQL. Khi phát
+triển, Mailpit nhận email đặt lại mật khẩu trong máy; gửi ra hộp thư thật cần
+cấu hình SMTP. SMTP không cần cho đăng ký hoặc đăng nhập.
 
 ### 3.2 Thử khung chat
 
@@ -88,25 +92,19 @@ hai tài khoản thử nghiệm (hiển thị ngay dưới form đăng nhập):
 2. Gõ câu hỏi, nhấn `Enter` để gửi; `Shift + Enter` để xuống dòng.
 3. Trong lúc chờ, widget hiện "Đang trả lời..." với hiệu ứng gõ.
 4. Bấm icon ba gạch trên header widget để xem **lịch sử hội thoại**: tạo mới,
-   xoá một, xoá tất cả.
-5. Tải lại trang (`F5`) — hội thoại và tin nhắn vẫn còn, vì được lưu ở
-   `localStorage`.
+   đổi tên, xoá một, xoá tất cả qua API server.
+5. Tải lại trang (`F5`) hoặc đăng nhập lại — hội thoại/tin nhắn được đọc lại
+   từ PostgreSQL theo tài khoản. Không tự nhập lịch sử local cũ.
 6. Thu nhỏ cửa sổ dưới 480px để thấy widget chiếm toàn màn hình (chế độ mobile).
 
 ### 3.3 Thử luồng lỗi mạng và nút "Thử lại"
 
-Mock mặc định luôn trả lời thành công. Để mô phỏng lỗi, tạo file `.env.local` ở
-thư mục gốc:
-
-```
-VITE_MOCK_ERROR_RATE=0.5
-```
-
-Khởi động lại `npm run dev`. Khoảng một nửa số tin sẽ báo lỗi kèm nút **Thử
-lại**; câu hỏi đã gửi vẫn nằm trong khung chat, không bị mất. Xoá file hoặc đặt
-về `0` để tắt.
-
-> `.env.local` đã nằm trong `.gitignore` (khớp `*.local`) nên không bị commit.
+Chat gọi API thật; service không còn nhánh `VITE_USE_MOCK_CHAT`. Lỗi mạng/
+model giữ câu hỏi và requestId để **Thử lại**, kể cả sau reload. Khi backend
+bận hoặc timeout, UI dùng message/Retry-After và HTTP budget từ server.
+Chạy `npm.cmd test` để kiểm tra lỗi bằng adapter được mock trong kiểm thử,
+không cần tạo lỗi giả trong dữ liệu thật. Chi tiết:
+[B4 và lịch sử server](../docs/08_project_changes_and_handover.md).
 
 ---
 
@@ -165,18 +163,12 @@ src/
 └── utils/          # Hàm thuần
 ```
 
-### Khi backend sẵn sàng
+### Hợp đồng backend hiện tại
 
-Chỉ cần sửa trong `src/services/` — bỏ dòng gọi `mock*` và mở comment dòng
-`httpClient` tương ứng. **Không phải sửa component nào.** Ví dụ trong
-`src/services/chat.ts`:
-
-```ts
-export async function sendMessage(conversationId: string, content: string) {
-  return httpClient.post<ChatMessage>('/chat/messages', { conversationId, content })
-  // return mockSendMessage(conversationId, content)
-}
-```
+`src/services/chat.ts` gọi API tạo/đọc/đổi tên/xóa hội thoại và đọc tin nhắn.
+Tạo hội thoại trước khi gửi; retry giữ nguyên requestId và institutionId.
+Xem [tổng hợp thay đổi hội thoại](../docs/08_project_changes_and_handover.md). State ở RAM
+chỉ phục vụ hiển thị, không thay thế dữ liệu server.
 
 ---
 
@@ -187,9 +179,9 @@ export async function sendMessage(conversationId: string, content: string) {
 | `Port 5173 is in use` | `npm run dev -- --port 3000` |
 | Lỗi `Cannot find module '@/...'` | Chạy lại `npm install`; alias `@/` khai báo ở `vite.config.ts` và `tsconfig.app.json` |
 | Trang trắng sau khi sửa code | Mở DevTools → Console xem lỗi; chạy `npm run typecheck` |
-| Vào `/` lại bị đẩy về `/login` | Chưa đăng nhập — dùng tài khoản ở mục 3.1 |
+| Vào `/` lại bị đẩy về `/login` | Chưa đăng nhập hoặc phiên hết hạn — đăng ký/đăng nhập theo mục 3.1 |
 | `user` vào `/admin` bị đẩy về `/` | Đúng thiết kế, `/admin` chỉ dành cho role `admin` |
-| Lịch sử chat không mất dù đã xoá | Xoá `chat-storage` trong DevTools → Application → Local Storage |
+| Xóa lịch sử báo lỗi hoặc xuất hiện lại | Kiểm tra kết quả API DELETE, phiên đăng nhập và dùng Tải lại lịch sử; không sửa localStorage để thay dữ liệu server |
 | Giao diện sai màu / mất theme | Kiểm tra `data-theme` trên thẻ `<html>`; đổi theme bằng nút trên header |
 | `npm install` lỗi phiên bản | Kiểm tra `node -v` >= 20.19 |
 

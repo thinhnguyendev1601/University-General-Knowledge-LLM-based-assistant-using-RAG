@@ -2,6 +2,21 @@
 
 Tài liệu này là nguồn chuẩn cho mọi thay đổi trong dự án. Đọc trước khi viết code.
 
+> Cập nhật theo yêu cầu người dùng (2026-11-07): frontend chính đã nối tài khoản
+> thật với FastAPI/PostgreSQL. Đăng ký chỉ nhận `@university.edu.vn`, kích hoạt
+> ngay và không xác minh email; đăng nhập cookie session, đăng xuất và đặt lại
+> mật khẩu đã có API. SMTP chỉ cần cho quên mật khẩu.
+> Những mô tả mock/JWT ở kế hoạch gốc bên dưới là lịch sử. Thay đổi tài khoản
+> được tóm tắt ở `../docs/08_project_changes_and_handover.md`; hợp đồng API nằm ở OpenAPI `/docs`. Không thêm
+> lại token đăng nhập vào localStorage hoặc dùng tài khoản demo trong luồng thật.
+
+> Cập nhật B4 (2026-11-07): người dùng yêu cầu nối lịch sử thật. Frontend
+> chính đã dùng API conversations/messages, UUID hội thoại do server tạo,
+> requestId giữ nguyên khi retry, metadata đổi tên/xóa trên server. Lịch sử
+> mới không persist vào localStorage; store chỉ là bản hiển thị theo session.
+> Các mô tả lịch sử local/mock ở kế hoạch gốc bên dưới được thay bằng
+> bản tóm tắt `../docs/08_project_changes_and_handover.md` và OpenAPI `/docs`. API chat vẫn đồng bộ, chưa SSE.
+
 ## 1. Mô tả dự án
 
 Website của trường đại học, thiết kế theo kiểu ChatGPT: người dùng đặt câu hỏi, hệ thống trả lời dựa trên **kho dữ liệu sẵn có** (FAQ, lịch học, quy chế, học bổng, thủ tục...). Giao diện tối giản, sạch, chuyên nghiệp.
