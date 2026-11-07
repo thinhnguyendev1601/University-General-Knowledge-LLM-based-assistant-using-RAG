@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [react()],
   // dev: /api/* -> FastAPI (uvicorn api.app:app --port 8000, chạy ở thư mục gốc repo)
   server: {
-    proxy: { '/api': 'http://localhost:8000' },
+    strictPort: true,
+    proxy: { '/api': process.env.VITE_API_TARGET || 'http://127.0.0.1:8000' },
   },
   resolve: {
     alias: {

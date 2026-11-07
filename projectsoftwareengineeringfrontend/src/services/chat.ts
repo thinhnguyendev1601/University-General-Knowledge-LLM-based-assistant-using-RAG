@@ -1,54 +1,76 @@
-/**
- * Chat service — chỉ có network, không có business logic.
- * sendMessage gọi backend RAG thật (api/app.py); hội thoại vẫn lưu cục bộ (mock)
- * cho tới khi backend có endpoint conversations. VITE_USE_MOCK_CHAT=true để dùng lại mock.
- */
+/** Server history is authoritative; no implicit import from legacy localStorage. */
 import type { ChatConversation, ChatMessage, Institution } from '@/types'
 import { httpClient } from './httpClient'
-import {
-  mockSendMessage,
-  mockGetConversations,
-  mockGetMessages,
-  mockDeleteConversation,
-} from '@/mocks'
 
 export async function getConversations(): Promise<ChatConversation[]> {
-  // return httpClient.get<ChatConversation[]>('/chat/conversations')
-  return mockGetConversations()
+  const result: ChatConversation[] = []
+  for (let offset = 0; ; offset += 100) {
+    const page = await httpClient.get<ChatConversation[]>(
+      `/chat/conversations?limit=100&offset=${offset}`
+    )
+    result.push(...page)
+    if (page.length < 100)
+      return [...new Map(result.map((item) => [item.id, item])).values()]
+  }
 }
 
-export async function getMessages(
-  conversationId: string
-): Promise<ChatMessage[]> {
-  // return httpClient.get<ChatMessage[]>(`/chat/conversations/${conversationId}/messages`)
-  return mockGetMessages(conversationId)
+export function createConversation(): Promise<ChatConversation> {
+  return httpClient.post('/chat/conversations', {})
 }
 
-const USE_MOCK_CHAT = import.meta.env.VITE_USE_MOCK_CHAT === 'true'
-// LLM chạy trên CPU (Ollama) mất 30-120 s cho một câu trả lời
-const CHAT_TIMEOUT_MS = Number(import.meta.env.VITE_CHAT_TIMEOUT_MS) || 180000
+export function getConversation(id: string): Promise<ChatConversation> {
+  return httpClient.get(`/chat/conversations/${id}`)
+}
+
+export async function getMessages(id: string): Promise<ChatMessage[]> {
+  const result: ChatMessage[] = []
+  let sequence = 0
+  while (true) {
+    const page = await httpClient.get<ChatMessage[]>(
+      `/chat/conversations/${id}/messages?limit=500&afterSequence=${sequence}`
+    )
+    result.push(...page)
+    if (page.length < 500) return result
+    const next = page.at(-1)?.sequence
+    if (next === undefined || next <= sequence)
+      throw new Error('Không đọc được trang lịch sử tiếp theo.')
+    sequence = next
+  }
+}
+
+export function getChatConfiguration(): Promise<{ requestTimeoutMs: number }> {
+  return httpClient.get('/chat/config')
+}
 
 export async function sendMessage(
   conversationId: string,
   content: string,
+  requestId: string,
   institutionId?: string
 ): Promise<ChatMessage> {
-  if (USE_MOCK_CHAT) return mockSendMessage(conversationId, content)
-  return httpClient.post<ChatMessage>(
+  const { requestTimeoutMs } = await getChatConfiguration()
+  return httpClient.post(
     '/chat/messages',
-    { conversationId, content, institutionId },
-    CHAT_TIMEOUT_MS
+    { conversationId, content, requestId, institutionId },
+    requestTimeoutMs
   )
 }
 
-/** Danh sách trường cho ô chọn trường (covered = hệ thống có tài liệu). */
-export async function getInstitutions(): Promise<Institution[]> {
-  return httpClient.get<Institution[]>('/institutions')
+export function getInstitutions(): Promise<Institution[]> {
+  return httpClient.get('/institutions')
 }
 
-export async function deleteConversation(
-  conversationId: string
-): Promise<void> {
-  // return httpClient.delete(`/chat/conversations/${conversationId}`)
-  return mockDeleteConversation(conversationId)
+export function renameConversation(
+  id: string,
+  title: string
+): Promise<ChatConversation> {
+  return httpClient.patch(`/chat/conversations/${id}`, { title })
+}
+
+export function deleteConversation(id: string): Promise<void> {
+  return httpClient.delete(`/chat/conversations/${id}`)
+}
+
+export function deleteAllConversations(): Promise<void> {
+  return httpClient.delete('/chat/conversations')
 }

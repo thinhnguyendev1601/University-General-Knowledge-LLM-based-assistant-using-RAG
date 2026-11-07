@@ -1,25 +1,20 @@
-/**
- * Auth service — chỉ có network, không có business logic.
- * Hiện dùng mock; khi backend sẵn sàng thì đổi sang httpClient.
- */
-import type { AuthResponse } from '@/types'
-import { mockLogin, mockGetDemoAccounts, type DemoAccount } from '@/mocks'
+import type {
+  AuthResponse,
+  MessageResponse,
+  RegisterCredentials,
+} from '@/types'
+import { httpClient } from './httpClient'
+import { demoAccounts } from '@/mocks/demoAccounts'
 
-export async function login(
-  email: string,
-  password: string
-): Promise<AuthResponse> {
-  // Khi có backend thật:
-  // return httpClient.post<AuthResponse>('/auth/login', { email, password })
-  return mockLogin(email, password)
-}
+export const getDemoAccounts = () => demoAccounts
 
-/**
- * Tài khoản thử nghiệm để hiển thị ở trang login.
- * Trả về mảng rỗng khi đã có backend thật — khi đó không còn tài khoản demo.
- */
-export function getDemoAccounts(): DemoAccount[] {
-  return mockGetDemoAccounts()
-}
-
-export type { DemoAccount }
+export const login = (email: string, password: string) =>
+  httpClient.post<AuthResponse>('/auth/login', { email, password })
+export const getCurrentUser = () => httpClient.get<AuthResponse>('/auth/me')
+export const logout = () => httpClient.post<void>('/auth/logout', {})
+export const registerAccount = (body: RegisterCredentials) =>
+  httpClient.post<MessageResponse>('/auth/register', body)
+export const forgotPassword = (email: string) =>
+  httpClient.post<MessageResponse>('/auth/forgot-password', { email })
+export const resetPassword = (token: string, password: string) =>
+  httpClient.post<MessageResponse>('/auth/reset-password', { token, password })

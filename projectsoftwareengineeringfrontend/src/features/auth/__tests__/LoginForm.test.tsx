@@ -15,8 +15,8 @@ vi.mock('@/services', async () => {
 const loginMock = vi.mocked(services.login)
 
 const adminResponse: AuthResponse = {
-  token: 'token-admin',
-  refreshToken: 'refresh-admin',
+  csrfToken: 'csrf-admin',
+  expiresAt: '2030-01-01T00:00:00Z',
   user: {
     id: 'usr-001',
     name: 'Quản trị viên',
@@ -37,10 +37,9 @@ describe('LoginForm', () => {
   beforeEach(() => {
     loginMock.mockReset()
     useAuthStore.setState({
-      token: null,
-      refreshToken: null,
       user: null,
       isAuthenticated: false,
+      isLoading: false,
     })
   })
 
@@ -65,15 +64,17 @@ describe('LoginForm', () => {
     expect(loginMock).not.toHaveBeenCalled()
   })
 
-  it('báo lỗi khi mật khẩu ngắn hơn 6 ký tự', async () => {
+  it('từ chối đăng nhập bằng tên miền khác', async () => {
     renderLoginForm()
 
-    await userEvent.type(screen.getByLabelText('Email'), 'a@university.edu.vn')
+    await userEvent.type(screen.getByLabelText('Email'), 'a@gmail.com')
     await userEvent.type(screen.getByLabelText('Mật khẩu'), '123')
     await userEvent.click(screen.getByRole('button', { name: 'Đăng nhập' }))
 
     expect(
-      await screen.findByText('Mật khẩu phải có ít nhất 6 ký tự')
+      await screen.findByText(
+        'Vui lòng sử dụng email trường có đuôi @university.edu.vn'
+      )
     ).toBeInTheDocument()
   })
 
@@ -102,7 +103,7 @@ describe('LoginForm', () => {
     expect(screen.getByLabelText('Mật khẩu')).toHaveValue('saimatkhau')
   })
 
-  it('lưu token và user kèm role vào auth store khi đăng nhập thành công', async () => {
+  it('lưu user trong bộ nhớ khi đăng nhập thành công, không lưu token vào localStorage', async () => {
     loginMock.mockResolvedValue(adminResponse)
     renderLoginForm()
 
@@ -116,8 +117,8 @@ describe('LoginForm', () => {
     await waitFor(() => {
       const state = useAuthStore.getState()
       expect(state.isAuthenticated).toBe(true)
-      expect(state.token).toBe('token-admin')
       expect(state.user?.role).toBe('admin')
+      expect(localStorage.getItem('auth-storage')).toBeNull()
     })
   })
 
@@ -134,12 +135,15 @@ describe('LoginForm', () => {
     expect(password).toHaveAttribute('type', 'password')
   })
 
-  it('hiện thông báo khi bấm quên mật khẩu, không dùng console.log', async () => {
+  it('cung cấp liên kết quên mật khẩu và đăng ký', () => {
     renderLoginForm()
 
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Quên mật khẩu?' })
+    expect(
+      screen.getByRole('link', { name: 'Quên mật khẩu?' })
+    ).toHaveAttribute('href', '/forgot-password')
+    expect(screen.getByRole('link', { name: 'Đăng ký' })).toHaveAttribute(
+      'href',
+      '/register'
     )
-    expect(await screen.findByRole('status')).toBeInTheDocument()
   })
 })

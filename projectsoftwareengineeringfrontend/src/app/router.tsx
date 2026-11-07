@@ -2,7 +2,13 @@
  * AppRouter — khai báo toàn bộ route và lớp bảo vệ của chúng.
  */
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { RequireAuth, RequireRole } from '@/features/auth'
+import {
+  RequireAuth,
+  RequireRole,
+  RegisterForm,
+  EmailRequestForm,
+  TokenActionForm,
+} from '@/features/auth'
 import { LoginPage } from '@/pages/LoginPage'
 import { HomePage } from '@/pages/HomePage'
 import { AdminPage } from '@/pages/AdminPage'
@@ -12,6 +18,9 @@ export function AppRouter() {
     <Routes>
       {/* Login — không cần auth */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterForm />} />
+      <Route path="/forgot-password" element={<EmailRequestForm />} />
+      <Route path="/reset-password" element={<TokenActionForm />} />
 
       {/* Trang chủ — cần đăng nhập */}
       <Route

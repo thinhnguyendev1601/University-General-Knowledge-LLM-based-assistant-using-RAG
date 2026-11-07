@@ -1,4 +1,11 @@
-export type { Role, User, AuthResponse, LoginCredentials } from './auth'
+export type {
+  Role,
+  User,
+  AuthResponse,
+  LoginCredentials,
+  RegisterCredentials,
+  MessageResponse,
+} from './auth'
 export type {
   ChatMessage,
   ChatConversation,

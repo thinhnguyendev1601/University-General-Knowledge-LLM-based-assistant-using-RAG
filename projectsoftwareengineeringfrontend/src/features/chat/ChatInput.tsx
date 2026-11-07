@@ -9,7 +9,7 @@ import styles from './ChatWidget.module.css'
 const MAX_TEXTAREA_HEIGHT = 120
 
 interface ChatInputProps {
-  onSend: (content: string) => void
+  onSend: (content: string) => void | Promise<boolean>
   disabled: boolean
 }
 
@@ -26,7 +26,12 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
 
   const handleSend = () => {
     if (!value.trim() || disabled) return
-    onSend(value)
+    const submitted = value
+    const result = onSend(submitted)
+    if (result)
+      void result.then((accepted) => {
+        if (!accepted) setValue((current) => current || submitted)
+      })
     // Chỉ xoá nội dung sau khi đã chuyển cho store — lỗi mạng không làm mất tin
     setValue('')
     if (textareaRef.current) {
@@ -55,6 +60,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           }}
           onKeyDown={handleKeyDown}
           rows={1}
+          maxLength={2000}
           id="chat-input"
           aria-label="Nhập tin nhắn"
         />

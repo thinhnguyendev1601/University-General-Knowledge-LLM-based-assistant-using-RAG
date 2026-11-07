@@ -1,46 +1,80 @@
-/**
- * Auth store — quản lý trạng thái đăng nhập.
- * Persist vào localStorage để giữ session khi reload.
- */
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import type { User } from '@/types'
+import type { AuthResponse, User } from '@/types'
+import { ApiError, getCurrentUser, logout as endSession } from '@/services'
+import { setCsrfToken } from '@/services/httpClient'
 
 interface AuthState {
-  token: string | null
-  refreshToken: string | null
   user: User | null
   isAuthenticated: boolean
-  setAuth: (token: string, refreshToken: string, user: User) => void
-  logout: () => void
+  isLoading: boolean
+  initializationError: string | null
+  setAuth: (response: AuthResponse) => void
+  clearAuth: () => void
+  initialize: () => Promise<void>
+  logout: () => Promise<void>
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      token: null,
-      refreshToken: null,
+let initialization: Promise<void> | null = null
+
+export const useAuthStore = create<AuthState>()((set, get) => ({
+  user: null,
+  isAuthenticated: false,
+  isLoading: true,
+  initializationError: null,
+  setAuth: (response) => {
+    setCsrfToken(response.csrfToken)
+    window.dispatchEvent(
+      new CustomEvent('auth-user-changed', { detail: response.user.id })
+    )
+    set({
+      user: response.user,
+      isAuthenticated: true,
+      isLoading: false,
+      initializationError: null,
+    })
+  },
+  clearAuth: () => {
+    setCsrfToken(null)
+    window.dispatchEvent(new CustomEvent('auth-user-changed', { detail: null }))
+    set({
       user: null,
       isAuthenticated: false,
-
-      setAuth: (token, refreshToken, user) =>
-        set({
-          token,
-          refreshToken,
-          user,
-          isAuthenticated: true,
-        }),
-
-      logout: () =>
-        set({
-          token: null,
-          refreshToken: null,
-          user: null,
-          isAuthenticated: false,
-        }),
-    }),
-    {
-      name: 'auth-storage',
+      isLoading: false,
+      initializationError: null,
+    })
+  },
+  initialize: () => {
+    if (initialization) return initialization
+    localStorage.removeItem('auth-storage')
+    set({ isLoading: true, initializationError: null })
+    initialization = getCurrentUser()
+      .then((response) => get().setAuth(response))
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 401) {
+          get().clearAuth()
+        } else {
+          set({
+            isLoading: false,
+            initializationError:
+              'Không thể kiểm tra phiên đăng nhập. Vui lòng thử lại.',
+          })
+        }
+      })
+      .finally(() => {
+        initialization = null
+      })
+    return initialization
+  },
+  logout: async () => {
+    try {
+      await endSession()
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401)) throw error
     }
-  )
+    get().clearAuth()
+  },
+}))
+
+window.addEventListener('auth-expired', () =>
+  useAuthStore.getState().clearAuth()
 )

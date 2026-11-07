@@ -1,166 +1,97 @@
-/**
- * LoginForm — form đăng nhập với validate Zod.
- * Hiển thị lỗi ngay dưới field, báo lỗi sai thông tin rõ ràng.
- */
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { useAuthStore } from './authStore'
-import { PasswordField } from './PasswordField'
-import { DemoAccounts } from './DemoAccounts'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Button, Input } from '@/components/ui'
 import { login } from '@/services'
-import { Button, Input, Spinner } from '@/components/ui'
+import { AuthPanel } from './AuthPanel'
+import { DemoAccounts } from './DemoAccounts'
+import { useAuthStore } from './authStore'
+import { universityEmailSchema } from './authValidation'
 import styles from './LoginForm.module.css'
 
-const loginSchema = z.object({
-  email: z.string().min(1, 'Vui lòng nhập email').email('Email không hợp lệ'),
+const schema = z.object({
+  email: universityEmailSchema,
   password: z
     .string()
     .min(1, 'Vui lòng nhập mật khẩu')
-    .min(6, 'Mật khẩu phải có ít nhất 6 ký tự'),
+    .max(128, 'Mật khẩu quá dài'),
 })
-
-type LoginFormData = z.infer<typeof loginSchema>
+type FormData = z.infer<typeof schema>
 
 export function LoginForm() {
+  const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
+  const setAuth = useAuthStore((state) => state.setAuth)
   const navigate = useNavigate()
   const location = useLocation()
-  const setAuth = useAuthStore((state) => state.setAuth)
-  const [serverError, setServerError] = useState<string | null>(null)
-  const [showForgotNotice, setShowForgotNotice] = useState(false)
-
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { email: '', password: '' },
-  })
-
-  const onSubmit = async (data: LoginFormData) => {
-    setServerError(null)
+  } = useForm<FormData>({ resolver: zodResolver(schema) })
+  const submit = async (data: FormData) => {
+    setError(null)
     try {
       const response = await login(data.email, data.password)
-      setAuth(response.token, response.refreshToken, response.user)
-
-      // Ưu tiên trang người dùng định vào trước khi bị chặn, nếu không thì
-      // điều hướng theo role: admin → /admin, user → /
-      const from = (location.state as { from?: { pathname: string } })?.from
-        ?.pathname
+      setAuth(response)
+      const from = (location.state as { from?: { pathname?: string } } | null)
+        ?.from?.pathname
       const fallback = response.user.role === 'admin' ? '/admin' : '/'
-      navigate(from ?? fallback, { replace: true })
-    } catch (err: unknown) {
-      // Giữ nguyên giá trị đã gõ khi lỗi — react-hook-form không reset form
-      setServerError(
-        err instanceof Error ? err.message : 'Đã xảy ra lỗi, vui lòng thử lại'
+      navigate(
+        from?.startsWith('/') && !from.startsWith('//') ? from : fallback,
+        { replace: true }
+      )
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : 'Không thể đăng nhập. Vui lòng thử lại.'
       )
     }
   }
-
   return (
-    <div className={styles.container}>
-      <div className={styles.card}>
-        <div className={styles.header}>
-          <div className={styles.logo}>
-            <svg
-              className={styles.logoIcon}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
-              <path d="M6 12v5c3 3 9 3 12 0v-5" />
-            </svg>
-          </div>
-          <h1 className={styles.title}>Đăng nhập</h1>
-          <p className={styles.subtitle}>Trợ lý hỏi đáp Đại học</p>
-        </div>
-
-        {serverError && (
-          <div
-            className={styles.alertError}
-            role="alert"
-            id="login-error-alert"
-          >
-            <svg
-              className={styles.alertIcon}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="15" y1="9" x2="9" y2="15" />
-              <line x1="9" y1="9" x2="15" y2="15" />
-            </svg>
-            {serverError}
-          </div>
-        )}
-
-        {showForgotNotice && (
-          <div className={styles.alertInfo} role="status" id="forgot-notice">
-            Tính năng quên mật khẩu cần backend gửi email đặt lại mật khẩu nên
-            chưa khả dụng. Xem BACKEND_BLOCKED_FEATURES.md.
-          </div>
-        )}
-
-        <form
-          className={styles.form}
-          onSubmit={handleSubmit(onSubmit)}
-          noValidate
-          id="login-form"
+    <AuthPanel
+      title="Đăng nhập"
+      description="Sử dụng tài khoản với email @university.edu.vn."
+    >
+      {error && (
+        <p role="alert" className={styles.alertError}>
+          {error}
+        </p>
+      )}
+      <form className={styles.form} onSubmit={handleSubmit(submit)} noValidate>
+        <Input
+          id="login-email"
+          label="Email"
+          type="email"
+          autoComplete="username"
+          error={errors.email?.message}
+          {...register('email')}
+        />
+        <Input
+          id="login-password"
+          label="Mật khẩu"
+          type={showPassword ? 'text' : 'password'}
+          autoComplete="current-password"
+          error={errors.password?.message}
+          {...register('password')}
+        />
+        <button
+          type="button"
+          className={styles.forgotPasswordLink}
+          aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+          onClick={() => setShowPassword(!showPassword)}
         >
-          <Input
-            id="login-email"
-            label="Email"
-            type="email"
-            placeholder="name@university.edu.vn"
-            autoComplete="email"
-            error={errors.email?.message}
-            {...register('email')}
-          />
-
-          <PasswordField
-            error={errors.password?.message}
-            {...register('password')}
-          />
-
-          <div className={styles.forgotPassword}>
-            <button
-              type="button"
-              className={styles.forgotPasswordLink}
-              id="forgot-password-btn"
-              onClick={() => setShowForgotNotice(true)}
-            >
-              Quên mật khẩu?
-            </button>
-          </div>
-
-          <Button
-            type="submit"
-            fullWidth
-            disabled={isSubmitting}
-            id="login-submit-btn"
-          >
-            {isSubmitting ? (
-              <>
-                <Spinner size="sm" />
-                Đang đăng nhập...
-              </>
-            ) : (
-              'Đăng nhập'
-            )}
-          </Button>
-        </form>
-
-        <DemoAccounts />
-      </div>
-    </div>
+          {showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+        </button>
+        <Link to="/forgot-password">Quên mật khẩu?</Link>
+        <Button type="submit" disabled={isSubmitting} fullWidth>
+          {isSubmitting ? 'Đang đăng nhập...' : 'Đăng nhập'}
+        </Button>
+      </form>
+      <DemoAccounts />
+    </AuthPanel>
   )
 }

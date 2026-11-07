@@ -9,9 +9,19 @@ export interface User {
 }
 
 export interface AuthResponse {
-  token: string
-  refreshToken: string
   user: User
+  csrfToken: string
+  expiresAt: string
+}
+
+export interface RegisterCredentials {
+  name: string
+  email: string
+  password: string
+}
+
+export interface MessageResponse {
+  message: string
 }
 
 export interface LoginCredentials {

@@ -6,6 +6,13 @@ import { useState } from 'react'
 import { useUIStore } from '@/hooks/useUIStore'
 import { useChatStore } from './chatStore'
 import { useChat } from './useChat'
+import {
+  createServerConversation,
+  deleteServerConversation,
+  deleteServerConversations,
+  loadHistory,
+  renameServerConversation,
+} from './chatHistory'
 import { ChatHeader } from './ChatHeader'
 import { ChatSidebar } from './ChatSidebar'
 import { ChatMessages } from './ChatMessages'
@@ -26,13 +33,12 @@ export function ChatWidget() {
   const setActiveConversation = useChatStore(
     (state) => state.setActiveConversation
   )
-  const createConversation = useChatStore((state) => state.createConversation)
-  const deleteConversation = useChatStore((state) => state.deleteConversation)
-  const deleteAllConversations = useChatStore(
-    (state) => state.deleteAllConversations
-  )
+  const historyLoading = useChatStore((state) => state.historyLoading)
+  const pendingId = useChatStore((state) => state.pendingConversationId)
+  const retryAt = useChatStore((state) => state.retryAt)
+  const messagesLoadingId = useChatStore((state) => state.messagesLoadingId)
 
-  const { send, retry, isLoading } = useChat()
+  const { send, retry, isLoading } = useChat(isChatOpen)
   const [showSidebar, setShowSidebar] = useState(false)
 
   const activeMessages = activeConversationId
@@ -40,7 +46,8 @@ export function ChatWidget() {
     : []
 
   const handleNewConversation = () => {
-    createConversation()
+    if (isLoading || historyLoading) return
+    void createServerConversation()
     setShowSidebar(false)
   }
 
@@ -59,9 +66,12 @@ export function ChatWidget() {
               activeConversationId={activeConversationId}
               onClose={() => setShowSidebar(false)}
               onSelect={handleSelectConversation}
-              onDelete={deleteConversation}
+              onDelete={(id) => void deleteServerConversation(id)}
               onCreate={handleNewConversation}
-              onDeleteAll={deleteAllConversations}
+              onDeleteAll={() => void deleteServerConversations()}
+              onRename={renameServerConversation}
+              onRefresh={() => void loadHistory()}
+              isLoading={historyLoading}
             />
           )}
 
@@ -73,50 +83,65 @@ export function ChatWidget() {
 
           <ChatMessages
             messages={activeMessages}
-            isLoading={isLoading}
+            isLoading={isLoading && pendingId === activeConversationId}
             error={error}
             onRetry={retry}
+            retryAt={retryAt}
+            historyLoading={
+              messagesLoadingId === activeConversationId &&
+              activeConversationId !== null
+            }
           />
 
-          <ChatInput onSend={send} disabled={isLoading} />
+          <ChatInput
+            onSend={send}
+            disabled={
+              isLoading ||
+              historyLoading ||
+              (messagesLoadingId === activeConversationId &&
+                activeConversationId !== null)
+            }
+          />
         </div>
       )}
 
-      <button
-        className={styles.chatToggle}
-        onClick={toggleChat}
-        data-open={isChatOpen}
-        aria-label={isChatOpen ? 'Đóng chat' : 'Mở chat'}
-        aria-expanded={isChatOpen}
-        aria-controls="chat-panel"
-        id="chat-toggle-btn"
-      >
-        {isChatOpen ? (
-          <svg
-            className={styles.chatToggleIcon}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        ) : (
-          <svg
-            className={styles.chatToggleIcon}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-        )}
-      </button>
+      {!isChatOpen && (
+        <button
+          className={styles.chatToggle}
+          onClick={toggleChat}
+          data-open={isChatOpen}
+          aria-label={isChatOpen ? 'Đóng chat' : 'Mở chat'}
+          aria-expanded={isChatOpen}
+          aria-controls="chat-panel"
+          id="chat-toggle-btn"
+        >
+          {isChatOpen ? (
+            <svg
+              className={styles.chatToggleIcon}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          ) : (
+            <svg
+              className={styles.chatToggleIcon}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          )}
+        </button>
+      )}
     </>
   )
 }

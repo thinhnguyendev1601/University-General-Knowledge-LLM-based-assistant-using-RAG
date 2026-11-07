@@ -3,20 +3,31 @@
  * Hiển thị logo, theme toggle, avatar/role, link admin.
  */
 import { Link, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { useAuthStore } from '@/features/auth'
 import { useUIStore } from '@/hooks/useUIStore'
 import styles from './Header.module.css'
 
 export function Header() {
+  const [logoutError, setLogoutError] = useState<string | null>(null)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
   const logout = useAuthStore((state) => state.logout)
   const theme = useUIStore((state) => state.theme)
   const toggleTheme = useUIStore((state) => state.toggleTheme)
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
+  const handleLogout = async () => {
+    setLogoutError(null)
+    setIsLoggingOut(true)
+    try {
+      await logout()
+      navigate('/login')
+    } catch {
+      setLogoutError('Chưa đăng xuất được. Vui lòng thử lại.')
+    } finally {
+      setIsLoggingOut(false)
+    }
   }
 
   const getInitials = (name: string) => {
@@ -111,10 +122,12 @@ export function Header() {
             <button
               className={styles.logoutBtn}
               onClick={handleLogout}
+              disabled={isLoggingOut}
               id="logout-btn"
             >
-              Đăng xuất
+              {isLoggingOut ? 'Đang đăng xuất...' : 'Đăng xuất'}
             </button>
+            {logoutError && <span role="alert">{logoutError}</span>}
           </div>
         ) : (
           <Link to="/login" className={styles.adminLink} id="login-link">

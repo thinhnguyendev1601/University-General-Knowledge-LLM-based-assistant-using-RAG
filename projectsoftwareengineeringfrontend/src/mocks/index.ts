@@ -1,45 +1,5 @@
-import type { AuthResponse, ChatConversation, ChatMessage, User } from '@/types'
+import type { ChatConversation, ChatMessage } from '@/types'
 import { delay, generateId } from '@/utils'
-
-interface MockUser {
-  email: string
-  password: string
-  user: User
-}
-
-/** Tài khoản thử nghiệm hiển thị ở trang login khi chưa có backend. */
-export interface DemoAccount {
-  role: User['role']
-  email: string
-  password: string
-}
-
-/**
- * Mock users cho đăng nhập test.
- * Mật khẩu giả lập, KHÔNG phải logic bảo mật thật.
- */
-const MOCK_USERS: MockUser[] = [
-  {
-    email: 'admin@university.edu.vn',
-    password: 'admin123',
-    user: {
-      id: 'usr-001',
-      name: 'Quản trị viên',
-      email: 'admin@university.edu.vn',
-      role: 'admin' as const,
-    },
-  },
-  {
-    email: 'user@university.edu.vn',
-    password: 'user123',
-    user: {
-      id: 'usr-002',
-      name: 'Nguyễn Văn A',
-      email: 'user@university.edu.vn',
-      role: 'user' as const,
-    },
-  },
-]
 
 const MOCK_REPLIES = [
   'Chào bạn! Tôi là trợ lý ảo của Đại học. Bạn cần hỗ trợ gì?',
@@ -49,42 +9,6 @@ const MOCK_REPLIES = [
   'Thư viện mở cửa từ 7:00 - 21:00 các ngày trong tuần (trừ Chủ nhật). Sinh viên cần mang thẻ sinh viên để mượn sách. Mỗi lần mượn tối đa 5 cuốn, thời hạn 14 ngày.',
   'Phòng Tài chính hỗ trợ tra cứu học phí qua cổng thông tin sinh viên. Bạn đăng nhập bằng mã số sinh viên và mật khẩu được cấp đầu năm.',
 ]
-
-/**
- * Mock login — trả về dữ liệu giả đúng hợp đồng API.
- * Delay ~800ms để mô phỏng network.
- */
-export async function mockLogin(
-  email: string,
-  password: string
-): Promise<AuthResponse> {
-  await delay(800)
-
-  const found = MOCK_USERS.find(
-    (mockUser) => mockUser.email === email && mockUser.password === password
-  )
-
-  if (!found) {
-    throw new Error('Email hoặc mật khẩu không đúng')
-  }
-
-  return {
-    token: `mock-jwt-token-${found.user.id}`,
-    refreshToken: `mock-refresh-token-${found.user.id}`,
-    user: found.user,
-  }
-}
-
-/**
- * Danh sách tài khoản demo — lấy từ MOCK_USERS để component không hardcode.
- */
-export function mockGetDemoAccounts(): DemoAccount[] {
-  return MOCK_USERS.map((mockUser) => ({
-    role: mockUser.user.role,
-    email: mockUser.email,
-    password: mockUser.password,
-  }))
-}
 
 /**
  * Tỷ lệ mô phỏng lỗi mạng (0..1) để test nút "Thử lại" khi chưa có backend.

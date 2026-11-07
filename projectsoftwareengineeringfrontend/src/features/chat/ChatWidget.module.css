@@ -258,6 +258,50 @@
   flex-shrink: 0;
 }
 
+.sidebarItemRename {
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: var(--space-1);
+}
+
+.renameForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-body);
+}
+
+.renameForm input {
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-body);
+}
+
+.renameActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.sidebarItemRename:hover,
+.sidebarItemRename:focus-visible {
+  color: var(--color-primary);
+  background: var(--color-surface-muted);
+}
+
+.sidebarItem:focus-within .sidebarItemDelete {
+  opacity: 1;
+}
+
 .sidebarItem:hover .sidebarItemDelete {
   opacity: 1;
 }
@@ -271,6 +315,7 @@
   padding: var(--space-2) var(--space-4) var(--space-3);
   border-top: 1px solid var(--color-border);
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 

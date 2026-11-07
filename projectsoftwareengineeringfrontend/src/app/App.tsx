@@ -4,12 +4,15 @@
 import { BrowserRouter } from 'react-router-dom'
 import { AppProviders } from './providers'
 import { AppRouter } from './router'
+import { AuthBootstrap } from '@/features/auth'
 
 export function App() {
   return (
     <AppProviders>
       <BrowserRouter>
-        <AppRouter />
+        <AuthBootstrap>
+          <AppRouter />
+        </AuthBootstrap>
       </BrowserRouter>
     </AppProviders>
   )

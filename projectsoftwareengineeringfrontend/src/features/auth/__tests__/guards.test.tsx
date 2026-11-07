@@ -7,11 +7,15 @@ import { useAuthStore } from '../authStore'
 import type { Role } from '@/types'
 
 function signIn(role: Role) {
-  useAuthStore.getState().setAuth('token', 'refresh', {
-    id: 'usr-001',
-    name: 'Người dùng',
-    email: 'a@university.edu.vn',
-    role,
+  useAuthStore.getState().setAuth({
+    csrfToken: 'csrf',
+    expiresAt: '2030-01-01T00:00:00Z',
+    user: {
+      id: 'usr-001',
+      name: 'Người dùng',
+      email: 'a@university.edu.vn',
+      role,
+    },
   })
 }
 
@@ -46,7 +50,7 @@ function renderRoutes(initialPath: string) {
 
 describe('RequireAuth', () => {
   beforeEach(() => {
-    useAuthStore.getState().logout()
+    useAuthStore.getState().clearAuth()
   })
 
   it('chuyển về /login khi chưa đăng nhập', () => {
@@ -61,18 +65,21 @@ describe('RequireAuth', () => {
     expect(screen.getByText('Trang chủ')).toBeInTheDocument()
   })
 
-  it('giữ session sau khi reload (đọc lại từ localStorage)', () => {
-    signIn('user')
-    // Zustand persist ghi vào localStorage ngay khi setAuth
-    const stored = localStorage.getItem('auth-storage')
-    expect(stored).not.toBeNull()
-    expect(JSON.parse(stored as string).state.isAuthenticated).toBe(true)
+  it('không tin trạng thái đăng nhập giả trong localStorage', () => {
+    localStorage.setItem(
+      'auth-storage',
+      JSON.stringify({
+        state: { isAuthenticated: true, user: { role: 'admin' } },
+      })
+    )
+    renderRoutes('/admin')
+    expect(screen.getByText('Trang đăng nhập')).toBeInTheDocument()
   })
 })
 
 describe('RequireRole', () => {
   beforeEach(() => {
-    useAuthStore.getState().logout()
+    useAuthStore.getState().clearAuth()
   })
 
   it('chuyển user thường khỏi /admin về trang chủ', () => {

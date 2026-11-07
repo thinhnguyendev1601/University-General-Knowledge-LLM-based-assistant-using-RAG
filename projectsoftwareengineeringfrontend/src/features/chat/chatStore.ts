@@ -1,166 +1,101 @@
-/**
- * Chat store — quản lý hội thoại và tin nhắn.
- * Lưu vào localStorage để khôi phục khi reload.
- */
+/** A per-session memory view of server history. No chat content is persisted locally. */
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import type { ChatConversation, ChatMessage } from '@/types'
-import { generateId, generateConversationTitle } from '@/utils'
-
-/**
- * Cập nhật 1 hội thoại và đưa lên đầu danh sách.
- * Sidebar render theo thứ tự mảng nên hội thoại vừa có tin mới luôn ở trên.
- */
-function touchConversation(
-  conversations: ChatConversation[],
-  id: string,
-  patch: Partial<ChatConversation> = {}
-): ChatConversation[] {
-  const target = conversations.find((conv) => conv.id === id)
-  if (!target) return conversations
-
-  const updated: ChatConversation = {
-    ...target,
-    ...patch,
-    updatedAt: new Date().toISOString(),
-  }
-  return [updated, ...conversations.filter((conv) => conv.id !== id)]
-}
 
 interface ChatState {
+  ownerId: string | null
+  sessionVersion: number
   conversations: ChatConversation[]
   messages: Record<string, ChatMessage[]>
   activeConversationId: string | null
   isLoading: boolean
+  historyLoading: boolean
+  messagesLoadingId: string | null
   error: string | null
-
-  // Actions
+  errorRequestId: string | null
+  retryAt: number
+  pendingConversationId: string | null
   setActiveConversation: (id: string | null) => void
-  createConversation: () => string
-  deleteConversation: (id: string) => void
-  deleteAllConversations: () => void
-  addUserMessage: (conversationId: string, content: string) => ChatMessage
-  addAssistantMessage: (conversationId: string, message: ChatMessage) => void
+  upsertConversation: (conversation: ChatConversation) => void
+  mergeMessages: (id: string, messages: ChatMessage[]) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
-  updateConversationTitle: (id: string, title: string) => void
 }
 
-export const useChatStore = create<ChatState>()(
-  persist(
-    (set, get) => ({
+export const useChatStore = create<ChatState>()((set) => ({
+  ownerId: null,
+  sessionVersion: 0,
+  conversations: [],
+  messages: {},
+  activeConversationId: null,
+  isLoading: false,
+  historyLoading: false,
+  messagesLoadingId: null,
+  error: null,
+  errorRequestId: null,
+  retryAt: 0,
+  pendingConversationId: null,
+  setActiveConversation: (id) => set({ activeConversationId: id, error: null }),
+  upsertConversation: (conversation) =>
+    set((state) => {
+      const previous = state.conversations.find(
+        (item) => item.id === conversation.id
+      )
+      if (previous && previous.updatedAt > conversation.updatedAt) return state
+      return {
+        conversations: [
+          conversation,
+          ...state.conversations.filter((item) => item.id !== conversation.id),
+        ].sort(
+          (a, b) =>
+            b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id)
+        ),
+      }
+    }),
+  mergeMessages: (id, incoming) =>
+    set((state) => {
+      const merged = [...(state.messages[id] ?? [])]
+      for (const message of incoming) {
+        const index = merged.findIndex(
+          (item) =>
+            item.id === message.id ||
+            (message.requestId &&
+              item.requestId === message.requestId &&
+              item.role === message.role)
+        )
+        if (index >= 0) merged[index] = message
+        else merged.push(message)
+      }
+      merged.sort((a, b) =>
+        a.sequence !== undefined && b.sequence !== undefined
+          ? a.sequence - b.sequence
+          : 0
+      )
+      return { messages: { ...state.messages, [id]: merged } }
+    }),
+  setLoading: (isLoading) => set({ isLoading }),
+  setError: (error) => set({ error }),
+}))
+
+// Old local IDs were never created on the server and cannot be treated as server IDs.
+// Existing local history is ignored, rather than silently imported or erased.
+window.addEventListener('auth-user-changed', (event) => {
+  const ownerId = (event as CustomEvent<string | null>).detail
+  const previous = useChatStore.getState()
+  if (ownerId !== previous.ownerId || ownerId === null) {
+    useChatStore.setState({
+      ownerId,
+      sessionVersion: previous.sessionVersion + 1,
       conversations: [],
       messages: {},
       activeConversationId: null,
       isLoading: false,
+      historyLoading: false,
+      messagesLoadingId: null,
       error: null,
-
-      setActiveConversation: (id) =>
-        set({ activeConversationId: id, error: null }),
-
-      createConversation: () => {
-        const id = generateId()
-        const newConversation: ChatConversation = {
-          id,
-          title: 'Hội thoại mới',
-          updatedAt: new Date().toISOString(),
-        }
-        set((state) => ({
-          conversations: [newConversation, ...state.conversations],
-          messages: { ...state.messages, [id]: [] },
-          activeConversationId: id,
-          error: null,
-        }))
-        return id
-      },
-
-      deleteConversation: (id) =>
-        set((state) => {
-          const newMessages = { ...state.messages }
-          delete newMessages[id]
-          const newConversations = state.conversations.filter(
-            (conv) => conv.id !== id
-          )
-          return {
-            conversations: newConversations,
-            messages: newMessages,
-            activeConversationId:
-              state.activeConversationId === id
-                ? (newConversations[0]?.id ?? null)
-                : state.activeConversationId,
-          }
-        }),
-
-      deleteAllConversations: () =>
-        set({
-          conversations: [],
-          messages: {},
-          activeConversationId: null,
-        }),
-
-      addUserMessage: (conversationId, content) => {
-        const message: ChatMessage = {
-          id: generateId(),
-          conversationId,
-          role: 'user',
-          content,
-          createdAt: new Date().toISOString(),
-        }
-
-        const state = get()
-        const currentMessages = state.messages[conversationId] ?? []
-        const isFirstMessage = currentMessages.length === 0
-
-        set((prev) => ({
-          messages: {
-            ...prev.messages,
-            [conversationId]: [
-              ...(prev.messages[conversationId] ?? []),
-              message,
-            ],
-          },
-          // Đổi tên tự động từ câu hỏi đầu tiên
-          conversations: touchConversation(
-            prev.conversations,
-            conversationId,
-            isFirstMessage ? { title: generateConversationTitle(content) } : {}
-          ),
-        }))
-
-        return message
-      },
-
-      addAssistantMessage: (conversationId, message) =>
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [conversationId]: [
-              ...(state.messages[conversationId] ?? []),
-              message,
-            ],
-          },
-          conversations: touchConversation(state.conversations, conversationId),
-        })),
-
-      setLoading: (loading) => set({ isLoading: loading }),
-
-      setError: (error) => set({ error }),
-
-      updateConversationTitle: (id, title) =>
-        set((state) => ({
-          conversations: state.conversations.map((conv) =>
-            conv.id === id ? { ...conv, title } : conv
-          ),
-        })),
-    }),
-    {
-      name: 'chat-storage',
-      // Không persist trạng thái loading/error
-      partialize: (state) => ({
-        conversations: state.conversations,
-        messages: state.messages,
-        activeConversationId: state.activeConversationId,
-      }),
-    }
-  )
-)
+      errorRequestId: null,
+      retryAt: 0,
+      pendingConversationId: null,
+    })
+  }
+})

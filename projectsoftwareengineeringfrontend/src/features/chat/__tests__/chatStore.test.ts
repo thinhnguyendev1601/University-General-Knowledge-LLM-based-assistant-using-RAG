@@ -1,133 +1,206 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from '../chatStore'
-import type { ChatMessage } from '@/types'
+import {
+  createServerConversation,
+  deleteServerConversation,
+  loadHistory,
+  loadMessages,
+  renameServerConversation,
+} from '../chatHistory'
+import * as api from '@/services'
+import type { ChatConversation, ChatMessage } from '@/types'
 
-function resetStore() {
-  useChatStore.setState({
-    conversations: [],
-    messages: {},
-    activeConversationId: null,
-    isLoading: false,
-    error: null,
-  })
-}
-
-function assistantReply(conversationId: string, content: string): ChatMessage {
+vi.mock('@/services', async () => {
+  const actual = await vi.importActual<typeof api>('@/services')
   return {
-    id: `reply-${content}`,
-    conversationId,
-    role: 'assistant',
-    content,
-    createdAt: new Date().toISOString(),
+    ...actual,
+    createConversation: vi.fn(),
+    getConversations: vi.fn(),
+    getMessages: vi.fn(),
+    deleteConversation: vi.fn(),
+    renameConversation: vi.fn(),
   }
+})
+
+const conversation: ChatConversation = {
+  id: 'server-uuid',
+  title: 'Saved on server',
+  updatedAt: '2026-11-07T01:00:00Z',
+}
+const question: ChatMessage = {
+  id: 'server-question',
+  conversationId: conversation.id,
+  role: 'user',
+  content: 'Question',
+  requestId: 'request-uuid',
+  sequence: 1,
+  deliveryStatus: 'failed',
+  createdAt: conversation.updatedAt,
 }
 
-describe('chatStore', () => {
-  beforeEach(resetStore)
-
-  it('tạo hội thoại mới và đặt làm hội thoại đang mở', () => {
-    const id = useChatStore.getState().createConversation()
-    const state = useChatStore.getState()
-
-    expect(state.conversations).toHaveLength(1)
-    expect(state.activeConversationId).toBe(id)
-    expect(state.conversations[0].title).toBe('Hội thoại mới')
-    expect(state.messages[id]).toEqual([])
-  })
-
-  it('đổi tên hội thoại tự động từ câu hỏi đầu tiên', () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().addUserMessage(id, 'Lịch thi học kỳ 2 khi nào?')
-
-    expect(useChatStore.getState().conversations[0].title).toBe(
-      'Lịch thi học kỳ 2 khi nào?'
+describe('server chat history', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    window.dispatchEvent(new CustomEvent('auth-user-changed', { detail: null }))
+    window.dispatchEvent(
+      new CustomEvent('auth-user-changed', { detail: 'student' })
     )
   })
 
-  it('không đổi tên lại ở tin nhắn thứ hai', () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().addUserMessage(id, 'Câu hỏi đầu')
-    useChatStore.getState().addUserMessage(id, 'Câu hỏi sau')
-
-    expect(useChatStore.getState().conversations[0].title).toBe('Câu hỏi đầu')
-    expect(useChatStore.getState().messages[id]).toHaveLength(2)
+  it('creates through the API and only uses the returned ID', async () => {
+    vi.mocked(api.createConversation).mockResolvedValue(conversation)
+    expect(await createServerConversation()).toBe(conversation.id)
+    expect(api.createConversation).toHaveBeenCalledOnce()
+    expect(useChatStore.getState().activeConversationId).toBe(conversation.id)
+    expect(localStorage.getItem('chat-storage')).toBeNull()
   })
 
-  it('thêm câu trả lời của trợ lý vào đúng hội thoại', () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().addUserMessage(id, 'Xin chào')
-    useChatStore
-      .getState()
-      .addAssistantMessage(id, assistantReply(id, 'Chào bạn'))
-
-    const messages = useChatStore.getState().messages[id]
-    expect(messages).toHaveLength(2)
-    expect(messages[1].role).toBe('assistant')
-    expect(messages[1].content).toBe('Chào bạn')
+  it('restores server history after a new login and loads messages', async () => {
+    vi.mocked(api.getConversations).mockResolvedValue([conversation])
+    vi.mocked(api.getMessages).mockResolvedValue([question])
+    await loadHistory()
+    await loadMessages(conversation.id)
+    expect(useChatStore.getState().activeConversationId).toBe(conversation.id)
+    expect(useChatStore.getState().messages[conversation.id]).toEqual([
+      question,
+    ])
+    window.dispatchEvent(new CustomEvent('auth-user-changed', { detail: null }))
+    expect(useChatStore.getState().messages).toEqual({})
+    window.dispatchEvent(
+      new CustomEvent('auth-user-changed', { detail: 'student' })
+    )
+    await loadHistory()
+    await loadMessages(conversation.id)
+    expect(useChatStore.getState().messages[conversation.id]).toEqual([
+      question,
+    ])
   })
 
-  it('đưa hội thoại có tin mới lên đầu danh sách', () => {
-    const first = useChatStore.getState().createConversation()
-    const second = useChatStore.getState().createConversation()
-
-    // `second` tạo sau nên đang ở đầu; gửi tin vào `first` phải đẩy nó lên
-    expect(useChatStore.getState().conversations[0].id).toBe(second)
-
-    useChatStore.getState().addUserMessage(first, 'Tin mới nhất')
-    expect(useChatStore.getState().conversations[0].id).toBe(first)
+  it('reconciles optimistic questions by requestId without duplicates', () => {
+    const store = useChatStore.getState()
+    store.upsertConversation(conversation)
+    store.mergeMessages(conversation.id, [
+      { ...question, id: 'pending-request-uuid', sequence: undefined },
+    ])
+    store.mergeMessages(conversation.id, [question])
+    store.mergeMessages(conversation.id, [
+      { ...question, deliveryStatus: 'completed' },
+    ])
+    expect(useChatStore.getState().messages[conversation.id]).toHaveLength(1)
+    expect(useChatStore.getState().messages[conversation.id][0].id).toBe(
+      'server-question'
+    )
   })
 
-  it('xoá một hội thoại kèm tin nhắn của nó', () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().addUserMessage(id, 'Sẽ bị xoá')
-    useChatStore.getState().deleteConversation(id)
-
-    const state = useChatStore.getState()
-    expect(state.conversations).toHaveLength(0)
-    expect(state.messages[id]).toBeUndefined()
-    expect(state.activeConversationId).toBeNull()
+  it('does not mix late history, messages or creation into a different login', async () => {
+    let finish: (items: ChatConversation[]) => void = () => {}
+    vi.mocked(api.getConversations).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = loadHistory()
+    window.dispatchEvent(
+      new CustomEvent('auth-user-changed', { detail: 'other-student' })
+    )
+    finish([conversation])
+    await pending
+    expect(useChatStore.getState().conversations).toEqual([])
   })
 
-  it('chuyển sang hội thoại còn lại khi xoá hội thoại đang mở', () => {
-    const first = useChatStore.getState().createConversation()
-    const second = useChatStore.getState().createConversation()
-
-    useChatStore.getState().setActiveConversation(second)
-    useChatStore.getState().deleteConversation(second)
-
-    expect(useChatStore.getState().activeConversationId).toBe(first)
+  it('does not remove history when the delete request fails', async () => {
+    useChatStore.getState().upsertConversation(conversation)
+    vi.mocked(api.deleteConversation).mockRejectedValue(new Error('offline'))
+    await deleteServerConversation(conversation.id)
+    expect(useChatStore.getState().conversations).toEqual([conversation])
+    expect(useChatStore.getState().error).toBe(
+      'Không thể kết nối đến server. Vui lòng thử lại.'
+    )
+    vi.mocked(api.deleteConversation).mockResolvedValue(undefined)
+    await deleteServerConversation(conversation.id)
+    expect(useChatStore.getState().conversations).toEqual([])
   })
 
-  it('xoá tất cả hội thoại', () => {
-    useChatStore.getState().createConversation()
-    useChatStore.getState().createConversation()
-    useChatStore.getState().deleteAllConversations()
-
-    const state = useChatStore.getState()
-    expect(state.conversations).toHaveLength(0)
-    expect(state.messages).toEqual({})
-    expect(state.activeConversationId).toBeNull()
+  it('renames on the server and keeps its returned metadata', async () => {
+    useChatStore.getState().upsertConversation(conversation)
+    vi.mocked(api.renameConversation).mockResolvedValue({
+      ...conversation,
+      title: 'Renamed',
+    })
+    await renameServerConversation(conversation.id, 'Renamed')
+    expect(api.renameConversation).toHaveBeenCalledWith(
+      conversation.id,
+      'Renamed'
+    )
+    expect(useChatStore.getState().conversations[0].title).toBe('Renamed')
   })
 
-  it('đổi tên hội thoại thủ công', () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().updateConversationTitle(id, 'Tên mới')
-
-    expect(useChatStore.getState().conversations[0].title).toBe('Tên mới')
+  it('ignores a message response after its conversation was deleted', async () => {
+    useChatStore.getState().upsertConversation(conversation)
+    let finish: (items: ChatMessage[]) => void = () => {}
+    vi.mocked(api.getMessages).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = loadMessages(conversation.id)
+    vi.mocked(api.deleteConversation).mockResolvedValue(undefined)
+    await deleteServerConversation(conversation.id)
+    finish([question])
+    await pending
+    expect(useChatStore.getState().messages).toEqual({})
   })
 
-  it('lưu hội thoại vào localStorage để khôi phục sau reload', () => {
-    const id = useChatStore.getState().createConversation()
-    useChatStore.getState().addUserMessage(id, 'Câu hỏi cần khôi phục')
+  it('ignores a create response belonging to an old login', async () => {
+    let finish: (item: ChatConversation) => void = () => {}
+    vi.mocked(api.createConversation).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = createServerConversation()
+    window.dispatchEvent(
+      new CustomEvent('auth-user-changed', { detail: 'other-student' })
+    )
+    finish(conversation)
+    expect(await pending).toBeNull()
+    expect(useChatStore.getState().conversations).toEqual([])
+  })
 
-    const stored = localStorage.getItem('chat-storage')
-    expect(stored).not.toBeNull()
+  it('does not replace newer message state with an older in-flight read', async () => {
+    useChatStore.getState().upsertConversation(conversation)
+    let finish: (items: ChatMessage[]) => void = () => {}
+    vi.mocked(api.getMessages)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+      .mockResolvedValueOnce([{ ...question, deliveryStatus: 'completed' }])
+    const old = loadMessages(conversation.id)
+    await loadMessages(conversation.id)
+    finish([question])
+    await old
+    expect(
+      useChatStore.getState().messages[conversation.id][0].deliveryStatus
+    ).toBe('completed')
+  })
 
-    const parsed = JSON.parse(stored as string)
-    expect(parsed.state.conversations).toHaveLength(1)
-    expect(parsed.state.messages[id][0].content).toBe('Câu hỏi cần khôi phục')
-    // Không persist trạng thái tạm thời
-    expect(parsed.state.isLoading).toBeUndefined()
-    expect(parsed.state.error).toBeUndefined()
+  it('clears a network warning when polling discovers that the original request succeeded', async () => {
+    useChatStore.getState().upsertConversation(conversation)
+    useChatStore.setState({
+      error: 'network warning',
+      errorRequestId: question.requestId,
+    })
+    vi.mocked(api.getMessages).mockResolvedValue([
+      question,
+      { ...question, id: 'answer', role: 'assistant', sequence: 2 },
+    ])
+    await loadMessages(conversation.id)
+    expect(useChatStore.getState().error).toBeNull()
   })
 })

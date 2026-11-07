@@ -3,6 +3,8 @@
  * Chọn, xoá từng hội thoại, tạo mới, xoá tất cả.
  */
 import type { ChatConversation } from '@/types'
+import { useState } from 'react'
+import { ConversationRename } from './ConversationRename'
 import { formatDate } from '@/utils'
 import { Button } from '@/components/ui'
 import styles from './ChatWidget.module.css'
@@ -15,6 +17,9 @@ interface ChatSidebarProps {
   onDelete: (id: string) => void
   onCreate: () => void
   onDeleteAll: () => void
+  onRename: (id: string, title: string) => Promise<boolean>
+  onRefresh: () => void
+  isLoading: boolean
 }
 
 export function ChatSidebar({
@@ -25,7 +30,11 @@ export function ChatSidebar({
   onDelete,
   onCreate,
   onDeleteAll,
+  onRename,
+  onRefresh,
+  isLoading,
 }: ChatSidebarProps) {
+  const [renaming, setRenaming] = useState<ChatConversation | null>(null)
   return (
     <div className={styles.sidebar}>
       <div className={styles.sidebarHeader}>
@@ -50,7 +59,16 @@ export function ChatSidebar({
         </button>
       </div>
 
-      {conversations.length === 0 ? (
+      {renaming && (
+        <ConversationRename
+          key={renaming.id}
+          title={renaming.title}
+          onSave={(title) => onRename(renaming.id, title)}
+          onCancel={() => setRenaming(null)}
+        />
+      )}
+      {isLoading && <p role="status">Đang tải lịch sử...</p>}
+      {conversations.length === 0 && !isLoading ? (
         <div className={styles.sidebarEmpty}>Chưa có hội thoại nào</div>
       ) : (
         <div className={styles.sidebarList}>
@@ -60,6 +78,7 @@ export function ChatSidebar({
               className={`${styles.sidebarItem} ${conversation.id === activeConversationId ? styles.sidebarItemActive : ''}`}
               onClick={() => onSelect(conversation.id)}
               onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return
                 if (event.key === 'Enter') onSelect(conversation.id)
               }}
               role="button"
@@ -71,6 +90,17 @@ export function ChatSidebar({
               <span className={styles.sidebarItemDate}>
                 {formatDate(conversation.updatedAt)}
               </span>
+              <button
+                type="button"
+                className={styles.sidebarItemRename}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setRenaming(conversation)
+                }}
+                aria-label={`Đổi tên hội thoại ${conversation.title}`}
+              >
+                Đổi tên
+              </button>
               <button
                 className={styles.sidebarItemDelete}
                 onClick={(event) => {
@@ -98,6 +128,9 @@ export function ChatSidebar({
       )}
 
       <div className={styles.sidebarFooter}>
+        <Button size="sm" onClick={onRefresh} disabled={isLoading}>
+          Tải lại lịch sử
+        </Button>
         <Button
           size="sm"
           onClick={onCreate}

@@ -123,6 +123,7 @@
 }
 
 .demoInfo {
+  margin-top: var(--space-4);
   background-color: var(--color-primary-soft);
   border-radius: var(--radius-sm);
   padding: var(--space-3) var(--space-4);
@@ -167,4 +168,17 @@
 
 .passwordToggle:hover {
   color: var(--color-text);
+}
+
+.authLinks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  font-size: var(--font-size-sm);
+}
+
+.authLinks a {
+  color: var(--color-primary);
 }
