@@ -3,6 +3,7 @@
 - **Real accounts:** added registration, login, session restoration, logout, and password reset using FastAPI/PostgreSQL.
 - **Registration policy:** accept only `@university.edu.vn` and activate accounts immediately without email verification.
 - **Account security:** added Argon2id password hashing, HttpOnly session cookies, CSRF/Origin checks, session expiry/revocation, and rate limits.
+- **Redis session cache:** added expiring session snapshots, invalidation on logout/password reset, and DB fallback during Redis outages; PostgreSQL still enforces session validity and user permissions.
 - **Persistent database:** added SQLAlchemy models and Alembic migrations for accounts, sessions, conversations, document metadata, versions, and audit records.
 - **Server-side history:** added conversation creation, listing, renaming, deletion, message pagination, and saved answers/citations, with ownership checks.
 - **Reliable retry:** added `requestId`, processing states, duplicate-free replay, recovery after interruption, and rejection of late results.
