@@ -43,7 +43,7 @@ def test_restore_target_cannot_be_a_live_database_or_sql(name):
 
 
 def test_verification_workspace_is_cleaned_without_leaving_child_process_files():
-    from scripts.verify_b7 import Server
+    from scripts.verify_backend import Server
     server=Server('postgresql+psycopg://unused:unused@127.0.0.1/unused',False)
     directory=Path(server.workspace.name)
     (directory/'partial-child-corpus').mkdir()
